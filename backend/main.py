@@ -71,7 +71,7 @@ def create_app(conn: duckdb.DuckDBPyConnection = None) -> FastAPI:
     # ── Health ────────────────────────────────────────────────────────
     @app.get("/api/health")
     def health():
-        return {"status": "ok"}
+        return {"status": "ok", "version": "2.1.0"}
 
     # ── Variance ──────────────────────────────────────────────────────
     @app.get("/api/variance")

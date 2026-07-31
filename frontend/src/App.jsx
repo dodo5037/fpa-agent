@@ -33,7 +33,6 @@ export default function App() {
 
   // Track the last loaded session to avoid duplicate loads
   const loadedSessionRef = useRef(null)
-  const pollingRef = useRef(null)
 
   // ── Core data loader: loads everything for a session in one shot ──
   const loadSessionData = useCallback(async (sid) => {
@@ -93,21 +92,34 @@ export default function App() {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Smart polling: every 60s check if row count changed ──
+  // Track the row count of the currently loaded session (NOT the sid string)
+  const loadedRowCountRef = useRef(0)
+
   useEffect(() => {
     if (!sessionId) return
 
-    const poll = async () => {
-      const sess = await refreshSessions()
-      setSessions(sess)
-      const current = sess.find(s => s.session_id === sessionId)
-      if (current && current.row_count !== (loadedSessionRef.current?.rowCount ?? -1)) {
-        // Row count changed — reload
-        await loadSessionData(sessionId)
-      }
+    // Record the current row count from sessions list
+    const currentSession = sessions.find(s => s.session_id === sessionId)
+    if (currentSession) {
+      loadedRowCountRef.current = currentSession.row_count
     }
 
-    pollingRef.current = setInterval(poll, 60000)
-    return () => clearInterval(pollingRef.current)
+    const poll = async () => {
+      try {
+        const sess = await refreshSessions()
+        setSessions(sess)
+        const current = sess.find(s => s.session_id === sessionId)
+        const newCount = current?.row_count ?? 0
+        // Only reload if row count actually changed
+        if (newCount !== loadedRowCountRef.current) {
+          loadedRowCountRef.current = newCount
+          await loadSessionData(sessionId)
+        }
+      } catch {}
+    }
+
+    const interval = setInterval(poll, 60000)
+    return () => clearInterval(interval)
   }, [sessionId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Switch session: explicit user action ──
