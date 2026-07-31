@@ -3,7 +3,6 @@ import csv
 import io
 import json
 import os
-from datetime import datetime, timezone
 
 import duckdb
 from fastapi import FastAPI, HTTPException, UploadFile, File, Query
@@ -11,26 +10,26 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import get_settings
 from backend.variance_engine import calculate_variances, detect_anomalies
-from backend.audit import execute_logged, get_audit_entry, get_audit_log
+from backend.audit import execute_logged, get_audit_entry, get_audit_log, clear_audit_log
+from backend.sessions import (
+    create_session, get_session, list_sessions, delete_session,
+    session_exists, get_session_row_count,
+)
 
 
 def create_app(conn: duckdb.DuckDBPyConnection = None) -> FastAPI:
-    """
-    Create and configure the FastAPI application.
-
-    Args:
-        conn: Optional pre-initialized DuckDB connection (for testing).
-              If None, initializes from settings.
-    """
     settings = get_settings()
     if conn is None:
         from backend.db import init_db
         conn = init_db(settings.duckdb_path)
 
-    # Ensure seed data exists only for development/testing, not production
-    # Users upload their own data via the Upload Data tab
+    # Create a default session if none exists
+    if not session_exists(conn, "default"):
+        conn.execute(
+            "INSERT INTO sessions VALUES ('default', 'Default Session', CURRENT_TIMESTAMP)"
+        )
 
-    app = FastAPI(title="FP&A Agent Dashboard", version="1.0.0")
+    app = FastAPI(title="FP&A Agent Dashboard", version="2.0.0")
 
     app.add_middleware(
         CORSMiddleware,
@@ -39,9 +38,35 @@ def create_app(conn: duckdb.DuckDBPyConnection = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-
-    # Store conn on app state
     app.state.db = conn
+
+    # ── Sessions ─────────────────────────────────────────────────────
+    @app.get("/api/sessions")
+    def get_sessions():
+        sessions = list_sessions(app.state.db)
+        for s in sessions:
+            s["row_count"] = get_session_row_count(app.state.db, s["session_id"])
+        return {"sessions": sessions}
+
+    @app.post("/api/sessions")
+    async def create_new_session(body: dict):
+        name = body.get("name", "Untitled Session")
+        return create_session(app.state.db, name)
+
+    @app.delete("/api/sessions/{session_id}")
+    def delete_session_endpoint(session_id: str):
+        if session_id == "default":
+            raise HTTPException(status_code=400, detail="Cannot delete default session")
+        deleted = delete_session(app.state.db, session_id)
+        return {"deleted_rows": deleted}
+
+    @app.get("/api/sessions/{session_id}/info")
+    def session_info(session_id: str):
+        s = get_session(app.state.db, session_id)
+        if s is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        s["row_count"] = get_session_row_count(app.state.db, session_id)
+        return s
 
     # ── Health ────────────────────────────────────────────────────────
     @app.get("/api/health")
@@ -50,26 +75,29 @@ def create_app(conn: duckdb.DuckDBPyConnection = None) -> FastAPI:
 
     # ── Variance ──────────────────────────────────────────────────────
     @app.get("/api/variance")
-    def get_variance():
-        results = calculate_variances(app.state.db)
+    def get_variance(session_id: str = Query("default")):
+        results = calculate_variances(app.state.db, session_id=session_id)
         return {"results": results, "count": len(results)}
 
     @app.get("/api/variance/{entity_id}")
-    def get_variance_by_entity(entity_id: str):
-        all_results = calculate_variances(app.state.db)
+    def get_variance_by_entity(entity_id: str, session_id: str = Query("default")):
+        all_results = calculate_variances(app.state.db, session_id=session_id)
         filtered = [r for r in all_results if r["entity_id"] == entity_id]
         return {"results": filtered, "count": len(filtered)}
 
     # ── Anomalies ─────────────────────────────────────────────────────
     @app.get("/api/anomalies")
-    def get_anomalies(threshold_pct: float = Query(default=None)):
+    def get_anomalies(
+        threshold_pct: float = Query(default=None),
+        session_id: str = Query("default"),
+    ):
         threshold = threshold_pct if threshold_pct is not None else settings.anomaly_threshold_pct
-        results = detect_anomalies(app.state.db, threshold_pct=threshold)
+        results = detect_anomalies(app.state.db, threshold_pct=threshold, session_id=session_id)
         return {"results": results, "count": len(results), "threshold_pct": threshold}
 
     # ── Summary ───────────────────────────────────────────────────────
     @app.get("/api/summary")
-    def get_summary():
+    def get_summary(session_id: str = Query("default")):
         sql = """
         SELECT
             SUM(CASE WHEN a.account_type = 'revenue' AND ba.scenario = 'budget'
@@ -82,10 +110,10 @@ def create_app(conn: duckdb.DuckDBPyConnection = None) -> FastAPI:
                 THEN ba.amount ELSE 0 END) AS total_expense_actual
         FROM budget_actuals ba
         JOIN accounts a ON ba.account_id = a.account_id
+        WHERE ba.session_id = ?
         """
-        results, calc_ref = execute_logged(app.state.db, sql, params={})
+        results, calc_ref = execute_logged(app.state.db, sql, params={"session_id": session_id})
         row = results[0] if results else {}
-        # Deterministic net variance: actual revenue - actual expense
         rev_actual = float(row.get("total_revenue_actual", 0) or 0)
         exp_actual = float(row.get("total_expense_actual", 0) or 0)
         rev_budget = float(row.get("total_revenue_budget", 0) or 0)
@@ -102,7 +130,7 @@ def create_app(conn: duckdb.DuckDBPyConnection = None) -> FastAPI:
 
     # ── Data Upload ───────────────────────────────────────────────────
     @app.post("/api/data/upload")
-    async def upload_data(file: UploadFile = File(...)):
+    async def upload_data(session_id: str = Query("default"), file: UploadFile = File(...)):
         content = await file.read()
         text = content.decode("utf-8")
         reader = csv.DictReader(io.StringIO(text))
@@ -115,50 +143,37 @@ def create_app(conn: duckdb.DuckDBPyConnection = None) -> FastAPI:
         if not rows:
             raise HTTPException(status_code=400, detail="CSV has no data rows")
 
-        data = [(r["entity_id"], r["account_id"], r["period_id"], r["scenario"], float(r["amount"])) for r in rows]
+        data = [(r["entity_id"], r["account_id"], r["period_id"], r["scenario"], float(r["amount"]), session_id) for r in rows]
 
-        # Auto-insert missing dimension rows to satisfy FK constraints
+        # Auto-insert missing dimension rows
         entities = {d[0] for d in data}
         accounts = {d[1] for d in data}
         periods = {d[2] for d in data}
 
         for eid in entities:
-            conn_check = app.state.db.execute(
-                "SELECT COUNT(*) FROM entities WHERE entity_id = ?", [eid]
-            ).fetchone()[0]
-            if conn_check == 0:
-                app.state.db.execute(
-                    "INSERT INTO entities VALUES (?, ?)", [eid, eid]
-                )
+            exists = app.state.db.execute("SELECT COUNT(*) FROM entities WHERE entity_id = ?", [eid]).fetchone()[0]
+            if exists == 0:
+                app.state.db.execute("INSERT INTO entities VALUES (?, ?)", [eid, eid])
         for aid in accounts:
-            conn_check = app.state.db.execute(
-                "SELECT COUNT(*) FROM accounts WHERE account_id = ?", [aid]
-            ).fetchone()[0]
-            if conn_check == 0:
-                app.state.db.execute(
-                    "INSERT INTO accounts VALUES (?, ?, 'revenue', 'Uncategorized')",
-                    [aid, aid]
-                )
+            exists = app.state.db.execute("SELECT COUNT(*) FROM accounts WHERE account_id = ?", [aid]).fetchone()[0]
+            if exists == 0:
+                app.state.db.execute("INSERT INTO accounts VALUES (?, ?, 'revenue', 'Uncategorized')", [aid, aid])
         for pid in periods:
-            conn_check = app.state.db.execute(
-                "SELECT COUNT(*) FROM periods WHERE period_id = ?", [pid]
-            ).fetchone()[0]
-            if conn_check == 0:
-                app.state.db.execute(
-                    "INSERT INTO periods VALUES (?, 2024, 1, ?)",
-                    [pid, pid]
-                )
+            exists = app.state.db.execute("SELECT COUNT(*) FROM periods WHERE period_id = ?", [pid]).fetchone()[0]
+            if exists == 0:
+                app.state.db.execute("INSERT INTO periods VALUES (?, 2024, 1, ?)", [pid, pid])
 
         try:
             app.state.db.executemany(
-                "INSERT INTO budget_actuals VALUES (?, ?, ?, ?, ?)", data
+                "INSERT INTO budget_actuals (entity_id, account_id, period_id, scenario, amount, session_id) VALUES (?, ?, ?, ?, ?, ?)",
+                data
             )
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Insert failed: {str(e)}")
 
         from fastapi import Response
         return Response(
-            content=json.dumps({"rows_inserted": len(data), "filename": file.filename}),
+            content=json.dumps({"rows_inserted": len(data), "filename": file.filename, "session_id": session_id}),
             status_code=201,
             media_type="application/json"
         )
@@ -176,10 +191,14 @@ def create_app(conn: duckdb.DuckDBPyConnection = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Audit entry not found")
         return entry
 
-    # ── LLM (NL-to-SQL + Memo) ────────────────────────────────────────
+    @app.post("/api/audit/clear")
+    def clear_audit():
+        deleted = clear_audit_log(app.state.db)
+        return {"deleted": deleted}
+
+    # ── LLM ───────────────────────────────────────────────────────────
     @app.post("/api/ask")
-    async def ask(body: dict):
-        """Plain-English Q&A: translates to SQL, executes audit-logged."""
+    async def ask(body: dict, session_id: str = Query("default")):
         from backend.llm import ask_question
         question = body.get("question", "")
         if not question.strip():
@@ -193,12 +212,9 @@ def create_app(conn: duckdb.DuckDBPyConnection = None) -> FastAPI:
             raise HTTPException(status_code=500, detail=f"LLM error: {str(e)}")
 
     @app.post("/api/memo")
-    async def memo(body: dict):
-        """Generate a memo from pre-computed variance results."""
+    async def memo(session_id: str = Query("default")):
         from backend.llm import generate_memo
-        from backend.variance_engine import calculate_variances
-        # Always compute variances deterministically first, then pass to LLM
-        variance_data = calculate_variances(app.state.db)
+        variance_data = calculate_variances(app.state.db, session_id=session_id)
         try:
             memo_text = generate_memo(variance_data, app.state.db)
             return {"memo": memo_text, "calc_ref": variance_data[0]["calc_ref"] if variance_data else None}
@@ -217,11 +233,5 @@ def create_app(conn: duckdb.DuckDBPyConnection = None) -> FastAPI:
         for key, value in body.items():
             update_setting(app.state.db, key, value)
         return {"status": "ok"}
-
-    @app.post("/api/audit/clear")
-    def clear_audit():
-        from backend.audit import clear_audit_log
-        deleted = clear_audit_log(app.state.db)
-        return {"deleted": deleted}
 
     return app

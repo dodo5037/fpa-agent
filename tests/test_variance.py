@@ -42,14 +42,11 @@ def controlled_db():
 
     # Controlled budget/actual pairs:
     # Revenue: budget=10000, actual=11000 → variance=+1000, +10% → favorable
-    conn.execute("INSERT INTO budget_actuals VALUES "
-                 "('E001', 'R001', '2024-01', 'budget', 10000.00), "
-                 "('E001', 'R001', '2024-01', 'actual', 11000.00)")
-    # Expense: budget=5000, actual=5500 → variance=+500, +10% → unfavorable
-    conn.execute("INSERT INTO budget_actuals VALUES "
-                 "('E001', 'E001', '2024-01', 'budget', 5000.00), "
-                 "('E001', 'E001', '2024-01', 'actual', 5500.00)")
-
+    conn.execute("INSERT INTO budget_actuals (entity_id, account_id, period_id, scenario, amount, session_id) VALUES "
+                 "('E001', 'R001', '2024-01', 'budget', 10000.00, 'default'), "
+                 "('E001', 'R001', '2024-01', 'actual', 11000.00, 'default'), "
+                 "('E001', 'E001', '2024-01', 'budget', 5000.00, 'default'), "
+                 "('E001', 'E001', '2024-01', 'actual', 5500.00, 'default')")
     yield conn
     conn.close()
     if os.path.exists(path):

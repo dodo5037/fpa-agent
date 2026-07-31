@@ -40,10 +40,12 @@ JOIN budget_actuals ba_actual
     ON ba_budget.entity_id  = ba_actual.entity_id
     AND ba_budget.account_id = ba_actual.account_id
     AND ba_budget.period_id  = ba_actual.period_id
+    AND ba_budget.session_id = ba_actual.session_id
 JOIN accounts a
     ON ba_budget.account_id = a.account_id
 WHERE ba_budget.scenario = 'budget'
   AND ba_actual.scenario = 'actual'
+  AND ba_budget.session_id = ?
 ORDER BY ba_budget.entity_id, ba_budget.period_id, ba_budget.account_id
 """
 
@@ -73,10 +75,12 @@ JOIN budget_actuals ba_actual
     ON ba_budget.entity_id  = ba_actual.entity_id
     AND ba_budget.account_id = ba_actual.account_id
     AND ba_budget.period_id  = ba_actual.period_id
+    AND ba_budget.session_id = ba_actual.session_id
 JOIN accounts a
     ON ba_budget.account_id = a.account_id
 WHERE ba_budget.scenario = 'budget'
   AND ba_actual.scenario = 'actual'
+  AND ba_budget.session_id = ?
   AND ba_budget.amount != 0
   AND ABS(
       ((ba_actual.amount - ba_budget.amount) / ba_budget.amount) * 100
@@ -122,18 +126,11 @@ def _log_query(
 
 # ── Public API ───────────────────────────────────────────────────────
 
-def calculate_variances(conn: duckdb.DuckDBPyConnection) -> list[dict]:
+def calculate_variances(conn: duckdb.DuckDBPyConnection, session_id: str = "default") -> list[dict]:
     """
-    Calculate budget-vs-actuals variances for all entities/accounts/periods.
-
-    Every query is automatically logged to calculation_log.
-
-    Returns:
-        List of dicts with keys: entity_id, account_id, period_id,
-        account_type, account_name, budget_amount, actual_amount,
-        variance_amount, variance_pct, favorable, calc_ref.
+    Calculate budget-vs-actuals variances for a specific session.
     """
-    rows = conn.execute(VARIANCE_SQL).fetchall()
+    rows = conn.execute(VARIANCE_SQL, [session_id]).fetchall()
     columns = [d[0] for d in conn.description]
 
     results = []
@@ -141,10 +138,7 @@ def calculate_variances(conn: duckdb.DuckDBPyConnection) -> list[dict]:
         row_dict = dict(zip(columns, row))
         results.append(row_dict)
 
-    # Audit log
-    calc_ref = _log_query(conn, VARIANCE_SQL, None, results)
-
-    # Attach calc_ref to each result row
+    calc_ref = _log_query(conn, VARIANCE_SQL, {"session_id": session_id}, results)
     for r in results:
         r["calc_ref"] = calc_ref
 
@@ -154,24 +148,13 @@ def calculate_variances(conn: duckdb.DuckDBPyConnection) -> list[dict]:
 def detect_anomalies(
     conn: duckdb.DuckDBPyConnection,
     threshold_pct: float = 10.0,
+    session_id: str = "default",
 ) -> list[dict]:
     """
-    Detect variances exceeding the given threshold percentage.
-
-    Every query is automatically logged to calculation_log.
-
-    Args:
-        conn: DuckDB connection.
-        threshold_pct: Minimum absolute variance % to flag as anomaly.
-
-    Returns:
-        List of anomaly dicts with keys: entity_id, account_id, period_id,
-        account_type, account_name, budget_amount, actual_amount,
-        variance_amount, variance_pct, favorable, calc_ref.
+    Detect variances exceeding the given threshold for a specific session.
     """
     sql = ANOMALY_SQL.format(threshold=threshold_pct)
-
-    rows = conn.execute(sql).fetchall()
+    rows = conn.execute(sql, [session_id]).fetchall()
     columns = [d[0] for d in conn.description]
 
     results = []
@@ -179,11 +162,8 @@ def detect_anomalies(
         row_dict = dict(zip(columns, row))
         results.append(row_dict)
 
-    # Audit log
-    params = {"threshold_pct": threshold_pct}
+    params = {"threshold_pct": threshold_pct, "session_id": session_id}
     calc_ref = _log_query(conn, sql, params, results)
-
-    # Attach calc_ref
     for r in results:
         r["calc_ref"] = calc_ref
 

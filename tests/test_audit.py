@@ -39,11 +39,11 @@ def controlled_db():
                  "('R001', 'Product Revenue', 'revenue', 'Revenue'), "
                  "('E001', 'Salaries', 'expense', 'Personnel')")
     conn.execute("INSERT INTO periods VALUES ('2024-01', 2024, 1, 'FY2024 Jan')")
-    conn.execute("INSERT INTO budget_actuals VALUES "
-                 "('E001', 'R001', '2024-01', 'budget', 10000.00), "
-                 "('E001', 'R001', '2024-01', 'actual', 11000.00), "
-                 "('E001', 'E001', '2024-01', 'budget', 5000.00), "
-                 "('E001', 'E001', '2024-01', 'actual', 5500.00)")
+    conn.execute("INSERT INTO budget_actuals (entity_id, account_id, period_id, scenario, amount, session_id) VALUES "
+                 "('E001', 'R001', '2024-01', 'budget', 10000.00, 'default'), "
+                 "('E001', 'R001', '2024-01', 'actual', 11000.00, 'default'), "
+                 "('E001', 'E001', '2024-01', 'budget', 5000.00, 'default'), "
+                 "('E001', 'E001', '2024-01', 'actual', 5500.00, 'default')")
     yield conn
     conn.close()
     if os.path.exists(path):

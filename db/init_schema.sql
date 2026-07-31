@@ -57,3 +57,14 @@ CREATE TABLE IF NOT EXISTS settings (
 INSERT OR IGNORE INTO settings (key, value) VALUES ('audit_enabled', 'false');
 INSERT OR IGNORE INTO settings (key, value) VALUES ('ollama_base_url', '');
 INSERT OR IGNORE INTO settings (key, value) VALUES ('ollama_model', '');
+
+-- ── Sessions (each session = a separate data workspace) ──────────
+CREATE TABLE IF NOT EXISTS sessions (
+    session_id  VARCHAR PRIMARY KEY,
+    session_name VARCHAR NOT NULL,
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Add session_id column to budget_actuals (data isolated per session)
+-- Using INSERT OR IGNORE pattern for idempotency
+ALTER TABLE budget_actuals ADD COLUMN IF NOT EXISTS session_id VARCHAR DEFAULT 'default';

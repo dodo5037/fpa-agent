@@ -74,5 +74,6 @@ def load_seed_data(conn: duckdb.DuckDBPyConnection) -> None:
                 fact_rows.append((entity_id, account_id, period_id, "actual", actual_amt))
 
     conn.executemany(
-        "INSERT INTO budget_actuals VALUES (?, ?, ?, ?, ?)", fact_rows
+        "INSERT INTO budget_actuals (entity_id, account_id, period_id, scenario, amount, session_id) VALUES (?, ?, ?, ?, ?, ?)",
+        [(e, a, p, s, amt, "default") for (e, a, p, s, amt) in fact_rows]
     )

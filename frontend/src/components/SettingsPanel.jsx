@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
-import { fetchSettings, updateSettings, clearAuditLog } from '../api'
 
-export default function SettingsPanel({ onSettingsChanged }) {
+export default function SettingsPanel({ fetchSettings, updateSettings, clearAuditLog, onSettingsChanged }) {
   const [settings, setSettings] = useState(null)
   const [ollamaUrl, setOllamaUrl] = useState('')
   const [ollamaModel, setOllamaModel] = useState('')
@@ -16,7 +15,7 @@ export default function SettingsPanel({ onSettingsChanged }) {
       setOllamaUrl(s.ollama_base_url || '')
       setOllamaModel(s.ollama_model || '')
     })
-  }, [])
+  }, [fetchSettings])
 
   const toggleAudit = async () => {
     const newVal = !settings.audit_enabled
@@ -55,7 +54,7 @@ export default function SettingsPanel({ onSettingsChanged }) {
           <div>
             <h2 className="text-lg font-semibold">Audit Logging</h2>
             <p className="text-sm text-slate-400 mt-1">
-              When enabled, every SQL query is logged to the audit trail. When off, no entries are created.
+              When enabled, every SQL query is logged. When off, no entries are created.
             </p>
           </div>
           <button
@@ -92,7 +91,7 @@ export default function SettingsPanel({ onSettingsChanged }) {
       <div className="bg-slate-800 rounded-xl border border-slate-700 p-5">
         <h2 className="text-lg font-semibold mb-1">Ollama LLM Configuration</h2>
         <p className="text-sm text-slate-400 mb-4">
-          Configure your local Ollama instance. Leave empty to use defaults.
+          Configure your local Ollama instance. Starts empty — enter your details.
         </p>
         <div className="space-y-4">
           <div>
