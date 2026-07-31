@@ -1,0 +1,8 @@
+# FP&A Agent Dashboard — Python Dependencies
+fastapi>=0.115.0
+uvicorn[standard]>=0.34.0
+duckdb>=1.1.0
+pydantic-settings>=2.5.0
+httpx>=0.28.0
+python-multipart>=0.0.12
+pytest>=8.0.0

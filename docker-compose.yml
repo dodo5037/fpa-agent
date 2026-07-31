@@ -1,6 +1,4 @@
 # ── FP&A Agent Dashboard — Docker Compose ────────────────────────────
-# Skeleton: defines services, volumes, and env wiring.
-# Dockerfiles are built out in Step 7.
 
 services:
   # ── FastAPI Backend ──────────────────────────────────────────────
@@ -38,8 +36,8 @@ services:
   # ── React Frontend ───────────────────────────────────────────────
   frontend:
     build:
-      context: ./frontend
-      dockerfile: ../docker/Dockerfile.frontend
+      context: .
+      dockerfile: docker/Dockerfile.frontend
     ports:
       - "5173:80"
     environment:
