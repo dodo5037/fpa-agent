@@ -1,0 +1,53 @@
+# ── FP&A Agent Dashboard — Docker Compose ────────────────────────────
+# Skeleton: defines services, volumes, and env wiring.
+# Dockerfiles are built out in Step 7.
+
+services:
+  # ── FastAPI Backend ──────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    env_file:
+      - .env
+    volumes:
+      - duckdb_data:/app/data
+      - ./backend:/app/backend
+      - ./db:/app/db
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Ollama (Local LLM) ───────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ── React Frontend ───────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: ../docker/Dockerfile.frontend
+    ports:
+      - "5173:80"
+    environment:
+      - VITE_API_URL=http://localhost:${APP_PORT:-8000}
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  duckdb_data:
+  ollama_models:
