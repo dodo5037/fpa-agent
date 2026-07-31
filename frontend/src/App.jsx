@@ -57,11 +57,52 @@ export default function App() {
     } catch {}
   }, [])
 
-  // On mount: load sessions + data for default session
+  // On mount: load sessions, then load data for the session that has data
   useEffect(() => {
-    refreshSessions()
-    loadSessionData('default')
-  }, [refreshSessions, loadSessionData])
+    const init = async () => {
+      await refreshSessions()
+      // loadSessionData will be called by the session-detection effect below
+    }
+    init()
+  }, [refreshSessions])
+
+  // When sessions list loads, auto-switch to a session that has data
+  // if the current one is empty
+  useEffect(() => {
+    if (sessions.length === 0) return
+    const current = sessions.find(s => s.session_id === sessionId)
+    if (!current || current.row_count === 0) {
+      const withData = sessions.find(s => s.row_count > 0)
+      if (withData) {
+        setSessionId(withData.session_id)
+        loadSessionData(withData.session_id)
+        return
+      }
+    }
+    // Current session has data or no session has data — load current
+    loadSessionData(sessionId)
+  }, [sessions]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Smart polling: check session row count every 60s, reload only if changed
+  useEffect(() => {
+    let lastRowCount = sessions.find(s => s.session_id === sessionId)?.row_count ?? 0
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetchSessions()
+        const fresh = res.sessions || []
+        setSessions(fresh)
+        const current = fresh.find(s => s.session_id === sessionId)
+        const newCount = current?.row_count ?? 0
+        if (newCount !== lastRowCount) {
+          lastRowCount = newCount
+          loadSessionData(sessionId)
+        }
+      } catch {}
+    }, 60000) // 1 minute
+
+    return () => clearInterval(interval)
+  }, [sessionId, loadSessionData])
 
   // Switch session — always loads from DB (data persists in DuckDB)
   const switchSession = useCallback((sid) => {
@@ -202,7 +243,7 @@ export default function App() {
 
         <div key={`${activeTab}-${sessionId}`} className="p-6 reveal-animation">
           {activeTab === 'dashboard' && (
-            summary && summary.total_revenue_budget > 0 ? (
+            variances.length > 0 ? (
               <div className="space-y-6">
                 <KPICards summary={summary} onRefClick={handleRefClick} />
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
