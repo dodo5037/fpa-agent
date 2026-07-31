@@ -13,7 +13,9 @@ def execute_logged(
     params: dict | None = None,
 ) -> tuple[list[dict], str]:
     """
-    Execute a SQL query and automatically log it to calculation_log.
+    Execute a SQL query and log it to calculation_log.
+    Deduplicates: if the same query+params was already logged, reuses
+    the existing result_ref instead of creating a duplicate entry.
 
     Args:
         conn: DuckDB connection.
@@ -34,16 +36,24 @@ def execute_logged(
     results = [dict(zip(columns, row)) for row in rows]
 
     params_json = json.dumps(params, default=str) if params else json.dumps({})
-    result_str = json.dumps(results, default=str)
 
-    hash_input = f"{sql}|{params_json}|{result_str}"
+    # Deduplicate: compute hash from query+params only (not results),
+    # so re-running the same query reuses the same audit entry
+    hash_input = f"{sql}|{params_json}"
     result_ref = hashlib.sha256(hash_input.encode()).hexdigest()[:16]
 
-    conn.execute(
-        "INSERT INTO calculation_log (log_id, sql_query, params_json, timestamp, result_ref) "
-        "VALUES (nextval('seq_calculation_log'), ?, ?, CURRENT_TIMESTAMP, ?)",
-        [sql, params_json, result_ref]
-    )
+    # Check if this exact query+params was already logged
+    existing = conn.execute(
+        "SELECT result_ref FROM calculation_log WHERE result_ref = ? LIMIT 1",
+        [result_ref]
+    ).fetchone()
+
+    if not existing:
+        conn.execute(
+            "INSERT INTO calculation_log (log_id, sql_query, params_json, timestamp, result_ref) "
+            "VALUES (nextval('seq_calculation_log'), ?, ?, CURRENT_TIMESTAMP, ?)",
+            [sql, params_json, result_ref]
+        )
 
     return results, result_ref
 

@@ -27,6 +27,9 @@ def create_app(conn: duckdb.DuckDBPyConnection = None) -> FastAPI:
         from backend.db import init_db
         conn = init_db(settings.duckdb_path)
 
+    # Ensure seed data exists only for development/testing, not production
+    # Users upload their own data via the Upload Data tab
+
     app = FastAPI(title="FP&A Agent Dashboard", version="1.0.0")
 
     app.add_middleware(

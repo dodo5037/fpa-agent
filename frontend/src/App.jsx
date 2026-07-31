@@ -33,7 +33,11 @@ export default function App() {
       setVariances(vars.results || [])
       setAnomalies(anoms.results || [])
     } catch (e) {
-      setError(e.message)
+      // If backend is empty or errors, show empty state not a crash
+      setError(null)
+      setSummary(null)
+      setVariances([])
+      setAnomalies([])
     } finally {
       setLoading(false)
     }
@@ -110,15 +114,32 @@ export default function App() {
       <main className="p-6">
         {activeTab === 'dashboard' && (
           <div className="space-y-6">
-            {summary && <KPICards summary={summary} onRefClick={handleRefClick} />}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="lg:col-span-2">
-                <VarianceChart variances={variances} onRefClick={handleRefClick} />
+            {summary ? (
+              <>
+                <KPICards summary={summary} onRefClick={handleRefClick} />
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  <div className="lg:col-span-2">
+                    <VarianceChart variances={variances} onRefClick={handleRefClick} />
+                  </div>
+                  <div>
+                    <AnomalyPanel anomalies={anomalies.slice(0, 10)} onRefClick={handleRefClick} />
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="bg-slate-800 rounded-xl border border-slate-700 p-12 text-center">
+                <p className="text-slate-400 text-lg mb-2">No data loaded yet</p>
+                <p className="text-slate-500 text-sm mb-6">
+                  Upload your budget-vs-actuals CSV to see variances, anomalies, and KPIs.
+                </p>
+                <button
+                  onClick={() => setActiveTab('upload')}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-3 rounded-lg font-medium transition-colors"
+                >
+                  Go to Upload Data
+                </button>
               </div>
-              <div>
-                <AnomalyPanel anomalies={anomalies.slice(0, 10)} onRefClick={handleRefClick} />
-              </div>
-            </div>
+            )}
           </div>
         )}
 

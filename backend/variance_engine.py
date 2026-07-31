@@ -97,29 +97,35 @@ def _log_query(
 ) -> str:
     """
     Log a query execution to calculation_log and return the result_ref.
+    Deduplicates: same query+params reuses the existing entry.
 
     Args:
         conn: DuckDB connection.
         sql: The SQL query string.
         params: Parameters used (dict or None).
-        result_rows: The rows returned by the query.
+        result_rows: The rows returned by the query (unused for hash now).
 
     Returns:
         result_ref string (deterministic hash).
     """
     params_json = json.dumps(params, default=str) if params else json.dumps({})
-    result_str = json.dumps(result_rows, default=str)
-    timestamp = datetime.now(timezone.utc).isoformat()
 
-    # Deterministic hash of query + params + result
-    hash_input = f"{sql}|{params_json}|{result_str}"
+    # Hash from query+params only for deduplication
+    hash_input = f"{sql}|{params_json}"
     result_ref = hashlib.sha256(hash_input.encode()).hexdigest()[:16]
 
-    conn.execute(
-        "INSERT INTO calculation_log (log_id, sql_query, params_json, timestamp, result_ref) "
-        "VALUES (nextval('seq_calculation_log'), ?, ?, CURRENT_TIMESTAMP, ?)",
-        [sql, params_json, result_ref]
-    )
+    # Only insert if not already logged
+    existing = conn.execute(
+        "SELECT result_ref FROM calculation_log WHERE result_ref = ? LIMIT 1",
+        [result_ref]
+    ).fetchone()
+
+    if not existing:
+        conn.execute(
+            "INSERT INTO calculation_log (log_id, sql_query, params_json, timestamp, result_ref) "
+            "VALUES (nextval('seq_calculation_log'), ?, ?, CURRENT_TIMESTAMP, ?)",
+            [sql, params_json, result_ref]
+        )
 
     return result_ref
 
