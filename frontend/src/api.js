@@ -65,3 +65,22 @@ export async function uploadData(file) {
   }
   return res.json()
 }
+
+export async function fetchSettings() {
+  const res = await fetch(`${API}/api/settings`)
+  return res.json()
+}
+
+export async function updateSettings(settings) {
+  const res = await fetch(`${API}/api/settings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  })
+  return res.json()
+}
+
+export async function clearAuditLog() {
+  const res = await fetch(`${API}/api/audit/clear`, { method: 'POST' })
+  return res.json()
+}

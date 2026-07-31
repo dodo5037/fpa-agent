@@ -8,6 +8,7 @@ import QAPanel from './components/QAPanel'
 import MemoViewer from './components/MemoViewer'
 import AuditTrail from './components/AuditTrail'
 import UploadPanel from './components/UploadPanel'
+import SettingsPanel from './components/SettingsPanel'
 
 export default function App() {
   const [summary, setSummary] = useState(null)
@@ -65,6 +66,7 @@ export default function App() {
     { id: 'memo', label: 'Memo' },
     { id: 'upload', label: 'Upload Data' },
     { id: 'audit', label: 'Audit Trail' },
+    { id: 'settings', label: 'Settings' },
   ]
 
   return (
@@ -171,6 +173,10 @@ export default function App() {
             auditDetail={auditDetail}
             onRefClick={handleRefClick}
           />
+        )}
+
+        {activeTab === 'settings' && (
+          <SettingsPanel onSettingsChanged={refresh} />
         )}
       </main>
     </div>

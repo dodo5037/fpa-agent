@@ -96,36 +96,26 @@ def _log_query(
     result_rows: list[dict],
 ) -> str:
     """
-    Log a query execution to calculation_log and return the result_ref.
-    Deduplicates: same query+params reuses the existing entry.
-
-    Args:
-        conn: DuckDB connection.
-        sql: The SQL query string.
-        params: Parameters used (dict or None).
-        result_rows: The rows returned by the query (unused for hash now).
-
-    Returns:
-        result_ref string (deterministic hash).
+    Log a query to calculation_log ONLY if audit is enabled.
+    Returns result_ref hash regardless (for UI linking).
     """
-    params_json = json.dumps(params, default=str) if params else json.dumps({})
+    from backend.settings import is_audit_enabled
 
-    # Hash from query+params only for deduplication
+    params_json = json.dumps(params, default=str) if params else json.dumps({})
     hash_input = f"{sql}|{params_json}"
     result_ref = hashlib.sha256(hash_input.encode()).hexdigest()[:16]
 
-    # Only insert if not already logged
-    existing = conn.execute(
-        "SELECT result_ref FROM calculation_log WHERE result_ref = ? LIMIT 1",
-        [result_ref]
-    ).fetchone()
-
-    if not existing:
-        conn.execute(
-            "INSERT INTO calculation_log (log_id, sql_query, params_json, timestamp, result_ref) "
-            "VALUES (nextval('seq_calculation_log'), ?, ?, CURRENT_TIMESTAMP, ?)",
-            [sql, params_json, result_ref]
-        )
+    if is_audit_enabled(conn):
+        existing = conn.execute(
+            "SELECT result_ref FROM calculation_log WHERE result_ref = ? LIMIT 1",
+            [result_ref]
+        ).fetchone()
+        if not existing:
+            conn.execute(
+                "INSERT INTO calculation_log (log_id, sql_query, params_json, timestamp, result_ref) "
+                "VALUES (nextval('seq_calculation_log'), ?, ?, CURRENT_TIMESTAMP, ?)",
+                [sql, params_json, result_ref]
+            )
 
     return result_ref
 

@@ -16,6 +16,7 @@ def seeded_db():
     os.close(fd)
     os.unlink(path)
     conn = init_db(path)
+    conn.execute("UPDATE settings SET value = 'true' WHERE key = 'audit_enabled'")
     load_seed_data(conn)
     yield conn
     conn.close()
@@ -30,6 +31,7 @@ def controlled_db():
     os.close(fd)
     os.unlink(path)
     conn = init_db(path)
+    conn.execute("UPDATE settings SET value = 'true' WHERE key = 'audit_enabled'")
 
     # Minimal dimension data
     conn.execute("INSERT INTO entities VALUES ('E001', 'Test Entity')")

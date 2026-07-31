@@ -92,23 +92,32 @@ def validate_sql(sql: str) -> bool:
 
 # ── Ollama API Client ────────────────────────────────────────────────
 
-def _call_ollama(prompt: str) -> str:
+def _call_ollama(prompt: str, conn=None) -> str:
     """
-    Call the local Ollama API with a text prompt and return the response.
-
-    Args:
-        prompt: The text prompt to send to the LLM.
-
-    Returns:
-        The LLM's response text.
+    Call the local Ollama API. Uses settings from DB if available,
+    falls back to config.py defaults.
     """
-    settings = get_settings()
-    url = f"{settings.ollama_base_url}/api/generate"
+    base_url = "http://localhost:11434"
+    model = "qwen2.5"
+
+    if conn is not None:
+        from backend.settings import get_settings_dict
+        s = get_settings_dict(conn)
+        if s.get("ollama_base_url"):
+            base_url = s["ollama_base_url"]
+        if s.get("ollama_model"):
+            model = s["ollama_model"]
+    else:
+        settings = get_settings()
+        base_url = settings.ollama_base_url
+        model = settings.ollama_model
+
+    url = f"{base_url}/api/generate"
 
     response = httpx.post(
         url,
         json={
-            "model": settings.ollama_model,
+            "model": model,
             "prompt": prompt,
             "stream": False,
         },
@@ -136,7 +145,7 @@ def translate_to_sql(question: str, conn: duckdb.DuckDBPyConnection) -> str:
         ValueError: If the LLM-generated SQL fails validation.
     """
     prompt = f"{SCHEMA_DESC}\n\nQuestion: {question}\n\nSQL:"
-    raw_response = _call_ollama(prompt)
+    raw_response = _call_ollama(prompt, conn)
 
     # Extract SQL from response (may have markdown code fences)
     sql = raw_response.strip()
@@ -212,5 +221,5 @@ Write a concise memo (3-5 paragraphs) highlighting key variances,
 favorable and unfavorable trends, and notable anomalies. Reference the
 exact figures provided above. Do not invent numbers."""
 
-    memo = _call_ollama(prompt)
+    memo = _call_ollama(prompt, conn)
     return memo.strip()

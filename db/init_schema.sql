@@ -46,3 +46,14 @@ CREATE TABLE IF NOT EXISTS calculation_log (
 
 -- Sequence for log_id (DuckDB SEQUENCE)
 CREATE SEQUENCE IF NOT EXISTS seq_calculation_log START 1;
+
+-- ── App Settings (key-value store) ────────────────────────────────
+CREATE TABLE IF NOT EXISTS settings (
+    key   VARCHAR PRIMARY KEY,
+    value VARCHAR NOT NULL
+);
+
+-- Default: audit logging OFF
+INSERT OR IGNORE INTO settings (key, value) VALUES ('audit_enabled', 'false');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('ollama_base_url', '');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('ollama_model', '');

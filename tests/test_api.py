@@ -14,6 +14,7 @@ def client(tmp_path):
     """Create a FastAPI TestClient with a temporary DuckDB."""
     db_path = str(tmp_path / "test.duckdb")
     conn = init_db(db_path)
+    conn.execute("UPDATE settings SET value = 'true' WHERE key = 'audit_enabled'")
     load_seed_data(conn)
 
     from backend.main import create_app

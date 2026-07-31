@@ -205,4 +205,23 @@ def create_app(conn: duckdb.DuckDBPyConnection = None) -> FastAPI:
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Memo generation error: {str(e)}")
 
+    # ── Settings ─────────────────────────────────────────────────────
+    @app.get("/api/settings")
+    def get_app_settings():
+        from backend.settings import get_settings_dict
+        return get_settings_dict(app.state.db)
+
+    @app.post("/api/settings")
+    async def update_app_settings(body: dict):
+        from backend.settings import update_setting
+        for key, value in body.items():
+            update_setting(app.state.db, key, value)
+        return {"status": "ok"}
+
+    @app.post("/api/audit/clear")
+    def clear_audit():
+        from backend.audit import clear_audit_log
+        deleted = clear_audit_log(app.state.db)
+        return {"deleted": deleted}
+
     return app
