@@ -173,4 +173,33 @@ def create_app(conn: duckdb.DuckDBPyConnection = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Audit entry not found")
         return entry
 
+    # ── LLM (NL-to-SQL + Memo) ────────────────────────────────────────
+    @app.post("/api/ask")
+    async def ask(body: dict):
+        """Plain-English Q&A: translates to SQL, executes audit-logged."""
+        from backend.llm import ask_question
+        question = body.get("question", "")
+        if not question.strip():
+            raise HTTPException(status_code=400, detail="Question is required")
+        try:
+            result = ask_question(question, app.state.db)
+            return result
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"LLM error: {str(e)}")
+
+    @app.post("/api/memo")
+    async def memo(body: dict):
+        """Generate a memo from pre-computed variance results."""
+        from backend.llm import generate_memo
+        from backend.variance_engine import calculate_variances
+        # Always compute variances deterministically first, then pass to LLM
+        variance_data = calculate_variances(app.state.db)
+        try:
+            memo_text = generate_memo(variance_data, app.state.db)
+            return {"memo": memo_text, "calc_ref": variance_data[0]["calc_ref"] if variance_data else None}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Memo generation error: {str(e)}")
+
     return app
