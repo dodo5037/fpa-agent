@@ -65,6 +65,15 @@ CREATE TABLE IF NOT EXISTS sessions (
     created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Track uploaded files per session
+CREATE TABLE IF NOT EXISTS uploaded_files (
+    file_id     INTEGER PRIMARY KEY,
+    session_id  VARCHAR NOT NULL,
+    filename    VARCHAR NOT NULL,
+    row_count   INTEGER NOT NULL,
+    uploaded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE SEQUENCE IF NOT EXISTS seq_uploaded_files START 1;
+
 -- Add session_id column to budget_actuals (data isolated per session)
--- Using INSERT OR IGNORE pattern for idempotency
 ALTER TABLE budget_actuals ADD COLUMN IF NOT EXISTS session_id VARCHAR DEFAULT 'default';

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   fetchSummary, fetchVariances, fetchAnomalies, fetchAuditLog, fetchAuditEntry,
   askQuestion, generateMemo, uploadData,
@@ -18,20 +18,28 @@ import DataViewer from './components/DataViewer'
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard')
-  const [sessionId, setSessionId] = useState('default')
+  const [sessionId, setSessionId] = useState(null) // null until sessions load
   const [sessions, setSessions] = useState([])
 
   const [summary, setSummary] = useState(null)
   const [variances, setVariances] = useState([])
   const [anomalies, setAnomalies] = useState([])
-  const [loading, setLoading] = useState(false)
+  const [dataLoaded, setDataLoaded] = useState(false)
+  const [loading, setLoading] = useState(true)
 
   const [auditLog, setAuditLog] = useState([])
   const [selectedRef, setSelectedRef] = useState(null)
   const [auditDetail, setAuditDetail] = useState(null)
 
+  // Track the last loaded session to avoid duplicate loads
+  const loadedSessionRef = useRef(null)
+  const pollingRef = useRef(null)
+
+  // ── Core data loader: loads everything for a session in one shot ──
   const loadSessionData = useCallback(async (sid) => {
+    if (!sid) return
     setLoading(true)
+    setDataLoaded(false)
     try {
       const [sum, vars, anoms] = await Promise.all([
         fetchSummary(sid),
@@ -41,80 +49,79 @@ export default function App() {
       setSummary(sum)
       setVariances(vars.results || [])
       setAnomalies(anoms.results || [])
+      loadedSessionRef.current = sid
     } catch {
       setSummary(null)
       setVariances([])
       setAnomalies([])
     } finally {
+      setDataLoaded(true)
       setLoading(false)
     }
   }, [])
 
+  // ── Load sessions list ──
   const refreshSessions = useCallback(async () => {
     try {
       const res = await fetchSessions()
-      setSessions(res.sessions || [])
-    } catch {}
+      return res.sessions || []
+    } catch {
+      return []
+    }
   }, [])
 
-  // On mount: load sessions, then load data for the session that has data
+  // ── On mount: load sessions ONCE, pick the right one, load data ──
   useEffect(() => {
-    const init = async () => {
-      await refreshSessions()
-      // loadSessionData will be called by the session-detection effect below
-    }
-    init()
-  }, [refreshSessions])
+    let cancelled = false
 
-  // When sessions list loads, auto-switch to a session that has data
-  // if the current one is empty
-  useEffect(() => {
-    if (sessions.length === 0) return
-    const current = sessions.find(s => s.session_id === sessionId)
-    if (!current || current.row_count === 0) {
-      const withData = sessions.find(s => s.row_count > 0)
-      if (withData) {
-        setSessionId(withData.session_id)
-        loadSessionData(withData.session_id)
-        return
+    const init = async () => {
+      const sess = await refreshSessions()
+      if (cancelled) return
+      setSessions(sess)
+
+      // Pick session: current if it has data, else first with data, else default
+      let target = sess.find(s => s.row_count > 0)
+      if (!target) target = sess.find(s => s.session_id === 'default') || sess[0]
+      if (target) {
+        setSessionId(target.session_id)
+        await loadSessionData(target.session_id)
       }
     }
-    // Current session has data or no session has data — load current
-    loadSessionData(sessionId)
-  }, [sessions]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Smart polling: check session row count every 60s, reload only if changed
+    init()
+    return () => { cancelled = true }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Smart polling: every 60s check if row count changed ──
   useEffect(() => {
-    let lastRowCount = sessions.find(s => s.session_id === sessionId)?.row_count ?? 0
+    if (!sessionId) return
 
-    const interval = setInterval(async () => {
-      try {
-        const res = await fetchSessions()
-        const fresh = res.sessions || []
-        setSessions(fresh)
-        const current = fresh.find(s => s.session_id === sessionId)
-        const newCount = current?.row_count ?? 0
-        if (newCount !== lastRowCount) {
-          lastRowCount = newCount
-          loadSessionData(sessionId)
-        }
-      } catch {}
-    }, 60000) // 1 minute
+    const poll = async () => {
+      const sess = await refreshSessions()
+      setSessions(sess)
+      const current = sess.find(s => s.session_id === sessionId)
+      if (current && current.row_count !== (loadedSessionRef.current?.rowCount ?? -1)) {
+        // Row count changed — reload
+        await loadSessionData(sessionId)
+      }
+    }
 
-    return () => clearInterval(interval)
-  }, [sessionId, loadSessionData])
+    pollingRef.current = setInterval(poll, 60000)
+    return () => clearInterval(pollingRef.current)
+  }, [sessionId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Switch session — always loads from DB (data persists in DuckDB)
+  // ── Switch session: explicit user action ──
   const switchSession = useCallback((sid) => {
     if (sid === sessionId) return
     setSessionId(sid)
     loadSessionData(sid)
   }, [sessionId, loadSessionData])
 
-  // After upload: reload data for current session + refresh session list
+  // ── After upload: reload ──
   const handleUploadComplete = useCallback(async () => {
+    const sess = await refreshSessions()
+    setSessions(sess)
     await loadSessionData(sessionId)
-    await refreshSessions()
     setActiveTab('dashboard')
   }, [sessionId, loadSessionData, refreshSessions])
 
@@ -131,7 +138,8 @@ export default function App() {
     const name = prompt('Session name:')
     if (name) {
       await createSession(name)
-      await refreshSessions()
+      const sess = await refreshSessions()
+      setSessions(sess)
     }
   }
 
@@ -139,7 +147,8 @@ export default function App() {
     if (id === 'default') return
     if (confirm('Delete this session and all its data?')) {
       await deleteSession(id)
-      await refreshSessions()
+      const sess = await refreshSessions()
+      setSessions(sess)
       if (sessionId === id) switchSession('default')
     }
   }
@@ -156,6 +165,18 @@ export default function App() {
     { id: 'settings', label: 'Settings', icon: '⚙' },
   ]
 
+  // Show loading screen until initial data is loaded
+  if (!sessionId || (!dataLoaded && loading)) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        <div className="text-center">
+          <div className="inline-block w-8 h-8 border-2 border-slate-600 border-t-emerald-400 rounded-full animate-spin mb-3"></div>
+          <p className="text-slate-500 text-sm">Loading FP&A Dashboard...</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 flex">
       {/* Sidebar */}
@@ -165,7 +186,6 @@ export default function App() {
           <p className="text-xs text-slate-500 mt-0.5">Dashboard v2.0</p>
         </div>
 
-        {/* Sessions */}
         <div className="px-3 py-3 border-b border-slate-700">
           <div className="flex items-center justify-between mb-2 px-2">
             <span className="text-xs font-medium text-slate-400 uppercase tracking-wider">Sessions</span>
@@ -173,9 +193,7 @@ export default function App() {
               onClick={handleNewSession}
               className="text-slate-500 hover:text-emerald-400 text-sm"
               title="New session"
-            >
-              +
-            </button>
+            >+</button>
           </div>
           <div className="space-y-1 max-h-40 overflow-y-auto">
             {sessions.map(s => (
@@ -196,16 +214,13 @@ export default function App() {
                   <button
                     onClick={(e) => { e.stopPropagation(); handleDeleteSession(s.session_id) }}
                     className="text-slate-600 hover:text-rose-400 opacity-0 group-hover:opacity-100 ml-2 text-xs"
-                  >
-                    ✕
-                  </button>
+                  >✕</button>
                 )}
               </div>
             ))}
           </div>
         </div>
 
-        {/* Nav */}
         <nav className="flex-1 px-3 py-3 space-y-1 overflow-y-auto">
           {navItems.map(item => (
             <button
@@ -237,10 +252,14 @@ export default function App() {
             {navItems.find(n => n.id === activeTab)?.label || 'Dashboard'}
           </h2>
           {loading && (
-            <span className="text-xs text-slate-500 animate-pulse">Loading...</span>
+            <span className="text-xs text-slate-500 flex items-center gap-2">
+              <span className="inline-block w-3 h-3 border border-slate-600 border-t-emerald-400 rounded-full animate-spin"></span>
+              Reloading...
+            </span>
           )}
         </header>
 
+        {/* Only render content when data is loaded — prevents glitchy partial renders */}
         <div key={`${activeTab}-${sessionId}`} className="p-6 reveal-animation">
           {activeTab === 'dashboard' && (
             variances.length > 0 ? (

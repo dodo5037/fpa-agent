@@ -211,6 +211,12 @@ def create_app(conn: duckdb.DuckDBPyConnection = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=f"Insert failed: {str(e)}")
 
         from fastapi import Response
+        # Record the uploaded file
+        app.state.db.execute(
+            "INSERT INTO uploaded_files (file_id, session_id, filename, row_count, uploaded_at) "
+            "VALUES (nextval('seq_uploaded_files'), ?, ?, ?, CURRENT_TIMESTAMP)",
+            [session_id, file.filename, len(data)]
+        )
         return Response(
             content=json.dumps({"rows_inserted": len(data), "filename": file.filename, "session_id": session_id}),
             status_code=201,
@@ -232,7 +238,18 @@ def create_app(conn: duckdb.DuckDBPyConnection = None) -> FastAPI:
         rows = app.state.db.execute(sql, [session_id]).fetchall()
         cols = [d[0] for d in app.state.db.description]
         results = [dict(zip(cols, row)) for row in rows]
-        return {"results": results, "count": len(results), "session_id": session_id}
+
+        # Also get uploaded files for this session
+        files = app.state.db.execute(
+            "SELECT file_id, filename, row_count, uploaded_at FROM uploaded_files WHERE session_id = ? ORDER BY uploaded_at DESC",
+            [session_id]
+        ).fetchall()
+        file_list = [
+            {"file_id": f[0], "filename": f[1], "row_count": f[2], "uploaded_at": str(f[3])}
+            for f in files
+        ]
+
+        return {"results": results, "count": len(results), "session_id": session_id, "files": file_list}
 
     @app.delete("/api/data/{session_id}")
     def clear_session_data(session_id: str):

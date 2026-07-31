@@ -8,8 +8,10 @@ function formatCurrency(val) {
 
 export default function DataViewer({ sessionId }) {
   const [data, setData] = useState([])
+  const [files, setFiles] = useState([])
   const [loading, setLoading] = useState(true)
   const [expandedRow, setExpandedRow] = useState(null)
+  const [view, setView] = useState('files') // 'files' or 'table'
   const [clearing, setClearing] = useState(false)
   const [cleared, setCleared] = useState(null)
 
@@ -17,6 +19,7 @@ export default function DataViewer({ sessionId }) {
     setLoading(true)
     const res = await fetchSessionData(sessionId)
     setData(res.results || [])
+    setFiles(res.files || [])
     setLoading(false)
   }
 
@@ -32,7 +35,14 @@ export default function DataViewer({ sessionId }) {
     setTimeout(() => setCleared(null), 3000)
   }
 
-  if (loading) return <div className="text-slate-500">Loading data...</div>
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <div className="inline-block w-6 h-6 border-2 border-slate-600 border-t-emerald-400 rounded-full animate-spin"></div>
+        <p className="text-slate-500 text-sm ml-3">Loading data...</p>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-4">
@@ -41,15 +51,32 @@ export default function DataViewer({ sessionId }) {
           <h2 className="text-lg font-semibold">Session Data</h2>
           <p className="text-sm text-slate-400">{data.length} rows in session "{sessionId}"</p>
         </div>
-        {data.length > 0 && (
-          <button
-            onClick={handleClear}
-            disabled={clearing}
-            className="text-xs text-rose-400 hover:text-rose-300 bg-rose-400/10 px-3 py-1.5 rounded"
-          >
-            {clearing ? 'Clearing...' : 'Clear All Data'}
-          </button>
-        )}
+        <div className="flex items-center gap-3">
+          {/* View toggle */}
+          <div className="flex gap-1 bg-slate-800 rounded-lg p-1">
+            <button
+              onClick={() => setView('files')}
+              className={`text-xs px-3 py-1.5 rounded transition-colors ${
+                view === 'files' ? 'bg-slate-700 text-emerald-400' : 'text-slate-500 hover:text-slate-300'
+              }`}
+            >📁 Files</button>
+            <button
+              onClick={() => setView('table')}
+              className={`text-xs px-3 py-1.5 rounded transition-colors ${
+                view === 'table' ? 'bg-slate-700 text-emerald-400' : 'text-slate-500 hover:text-slate-300'
+              }`}
+            >📊 Table</button>
+          </div>
+          {data.length > 0 && (
+            <button
+              onClick={handleClear}
+              disabled={clearing}
+              className="text-xs text-rose-400 hover:text-rose-300 bg-rose-400/10 px-3 py-1.5 rounded"
+            >
+              {clearing ? 'Clearing...' : 'Clear All'}
+            </button>
+          )}
+        </div>
       </div>
 
       {cleared != null && (
@@ -58,12 +85,75 @@ export default function DataViewer({ sessionId }) {
         </div>
       )}
 
-      {data.length === 0 ? (
+      {data.length === 0 && files.length === 0 ? (
         <div className="bg-slate-800 rounded-xl border border-slate-700 p-12 text-center">
           <p className="text-slate-400">No data in this session</p>
           <p className="text-slate-500 text-sm mt-1">Upload a CSV to get started.</p>
         </div>
+      ) : view === 'files' ? (
+        /* ── Files View ── */
+        <div className="space-y-3">
+          {files.length === 0 ? (
+            <div className="bg-slate-800 rounded-xl border border-slate-700 p-8 text-center">
+              <p className="text-slate-500 text-sm">No files uploaded in this session</p>
+            </div>
+          ) : (
+            files.map((f, i) => (
+              <div
+                key={i}
+                className="bg-slate-800 rounded-xl border border-slate-700 p-4 flex items-center justify-between hover:border-slate-600 transition-colors"
+              >
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 rounded-lg bg-slate-700/50 flex items-center justify-center text-lg">
+                    📄
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-slate-200">{f.filename}</p>
+                    <p className="text-xs text-slate-500">
+                      {f.row_count} rows • uploaded {f.uploaded_at}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setView('table')}
+                  className="text-xs text-slate-400 hover:text-emerald-400 bg-slate-700/50 px-3 py-1.5 rounded"
+                >
+                  View Data →
+                </button>
+              </div>
+            ))
+          )}
+          {/* Summary card */}
+          {data.length > 0 && (
+            <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
+              <p className="text-xs text-slate-400 mb-2">Quick Summary</p>
+              <div className="grid grid-cols-4 gap-4">
+                <div>
+                  <p className="text-xs text-slate-500">Total Rows</p>
+                  <p className="font-mono-fin text-lg text-slate-200">{data.length}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500">Files</p>
+                  <p className="font-mono-fin text-lg text-slate-200">{files.length}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500">Entities</p>
+                  <p className="font-mono-fin text-lg text-slate-200">
+                    {new Set(data.map(d => d.entity_id)).size}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500">Accounts</p>
+                  <p className="font-mono-fin text-lg text-slate-200">
+                    {new Set(data.map(d => d.account_id)).size}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       ) : (
+        /* ── Table View ── */
         <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
           <div className="overflow-x-auto max-h-[70vh] overflow-y-auto">
             <table className="w-full text-sm">
@@ -116,7 +206,7 @@ export default function DataViewer({ sessionId }) {
         </div>
       )}
 
-      {/* Expand Bubble Overlay */}
+      {/* Expand Bubble */}
       {expandedRow !== null && data[expandedRow] && (
         <div
           className="fixed inset-0 flex items-center justify-center z-50 reveal-animation"
@@ -132,9 +222,7 @@ export default function DataViewer({ sessionId }) {
               <button
                 onClick={() => setExpandedRow(null)}
                 className="text-slate-500 hover:text-slate-300 text-lg"
-              >
-                ✕
-              </button>
+              >✕</button>
             </div>
             <div className="space-y-3">
               {Object.entries(data[expandedRow]).map(([key, val]) => (

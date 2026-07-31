@@ -4,6 +4,8 @@ import Chart from 'react-apexcharts'
 export default function VarianceChart({ variances, onRefClick }) {
   const [expanded, setExpanded] = useState(false)
   const [selectedAccount, setSelectedAccount] = useState(null)
+  const [chartType, setChartType] = useState('bar') // bar, line, area
+  const [detailType, setDetailType] = useState('flow') // flow, bar, line, area
 
   // Aggregate variances by account for the main chart
   const mainData = useMemo(() => {
@@ -22,7 +24,7 @@ export default function VarianceChart({ variances, onRefClick }) {
     }))
   }, [variances])
 
-  // Detail data for a specific account (by period)
+  // Detail data for a specific account
   const detailData = useMemo(() => {
     if (!selectedAccount) return []
     return variances
@@ -31,14 +33,22 @@ export default function VarianceChart({ variances, onRefClick }) {
         period: v.period_id,
         pct: v.variance_pct,
         amount: v.variance_amount,
+        budget: v.budget_amount,
+        actual: v.actual_amount,
         favorable: v.favorable,
       }))
       .sort((a, b) => a.period.localeCompare(b.period))
   }, [selectedAccount, variances])
 
+  const colorForType = (type, value) => {
+    if (type === 'revenue') return value >= 0 ? '#34d399' : '#fb7185'
+    return value >= 0 ? '#fb7185' : '#34d399'
+  }
+
+  // ── Main chart options ──
   const mainOptions = {
     chart: {
-      type: 'bar',
+      type: chartType === 'area' ? 'area' : chartType,
       toolbar: { show: false },
       events: {
         dataPointSelection: (event, chartContext, config) => {
@@ -50,62 +60,92 @@ export default function VarianceChart({ variances, onRefClick }) {
         },
       },
     },
-    plotOptions: {
-      bar: { borderRadius: 4, horizontal: false },
-    },
-    colors: mainData.map(d => d.type === 'revenue'
-      ? (d.total >= 0 ? '#34d399' : '#fb7185')
-      : (d.total >= 0 ? '#fb7185' : '#34d399')),
+    plotOptions: chartType === 'bar' ? { bar: { borderRadius: 4, horizontal: false } } : {},
+    colors: mainData.map(d => colorForType(d.type, d.total)),
     xaxis: {
       categories: mainData.map(d => d.name),
-      labels: { style: { colors: '#94a3b8', fontSize: '11px' } },
+      labels: { style: { colors: '#94a3b8', fontSize: '11px' }, rotate: -15 },
       axisBorder: { show: false },
       axisTicks: { show: false },
     },
     yaxis: { labels: { style: { colors: '#94a3b8' } } },
     grid: { show: false },
     legend: { show: false },
-    tooltip: {
-      theme: 'dark',
-      y: { formatter: (val) => `$${val.toFixed(2)}` },
-    },
+    tooltip: { theme: 'dark', y: { formatter: (val) => `$${val.toFixed(2)}` } },
     dataLabels: { enabled: false },
+    fill: chartType === 'area' ? { type: 'gradient', gradient: { shadeIntensity: 1, opacityFrom: 0.4, opacityTo: 0.1 } } : {},
+    stroke: chartType !== 'bar' ? { curve: 'smooth', width: 2 } : {},
   }
 
-  const detailOptions = {
-    chart: {
-      type: 'bar',
-      toolbar: { show: false },
-      animations: {
-        enabled: true,
-        easing: 'easeout',
-        speed: 400,
+  // ── Detail chart: "flow" shows budget vs actual side by side ──
+  // "bar/line/area" shows variance % over periods
+  const detailOptions = useMemo(() => {
+    if (detailType === 'flow') {
+      return {
+        chart: { type: 'bar', toolbar: { show: false }, stacked: false },
+        plotOptions: { bar: { borderRadius: 4, dataLabels: { position: 'top' } } },
+        colors: ['#64748b', detailData.length > 0 && detailData[0].favorable ? '#34d399' : '#fb7185'],
+        xaxis: {
+          categories: detailData.map(d => d.period),
+          labels: { style: { colors: '#94a3b8', fontSize: '11px' } },
+          axisBorder: { show: false },
+          axisTicks: { show: false },
+        },
+        yaxis: { labels: { style: { colors: '#94a3b8' }, formatter: (val) => `$${(val/1000).toFixed(0)}k` } },
+        grid: { show: false },
+        legend: { show: true, position: 'top', labels: { colors: '#94a3b8' } },
+        tooltip: { theme: 'dark', y: { formatter: (val) => `$${val.toFixed(2)}` } },
+        dataLabels: { enabled: false },
+      }
+    }
+
+    return {
+      chart: {
+        type: detailType === 'area' ? 'area' : detailType,
+        toolbar: { show: false },
       },
-    },
-    plotOptions: {
-      bar: { borderRadius: 4, horizontal: false },
-    },
-    colors: detailData.map(d => d.favorable ? '#34d399' : '#fb7185'),
-    xaxis: {
-      categories: detailData.map(d => d.period),
-      labels: { style: { colors: '#94a3b8', fontSize: '11px' } },
-      axisBorder: { show: false },
-      axisTicks: { show: false },
-    },
-    yaxis: {
-      labels: {
-        style: { colors: '#94a3b8' },
-        formatter: (val) => `${val.toFixed(1)}%`,
+      plotOptions: detailType === 'bar' ? { bar: { borderRadius: 4 } } : {},
+      colors: detailData.map(d => d.favorable ? '#34d399' : '#fb7185'),
+      xaxis: {
+        categories: detailData.map(d => d.period),
+        labels: { style: { colors: '#94a3b8', fontSize: '11px' } },
+        axisBorder: { show: false },
+        axisTicks: { show: false },
       },
-    },
-    grid: { show: false },
-    legend: { show: false },
-    tooltip: {
-      theme: 'dark',
-      y: { formatter: (val) => `${val.toFixed(2)}%` },
-    },
-    dataLabels: { enabled: false },
-  }
+      yaxis: {
+        labels: { style: { colors: '#94a3b8' }, formatter: (val) => `${val.toFixed(1)}%` },
+      },
+      grid: { show: false },
+      legend: { show: false },
+      tooltip: { theme: 'dark', y: { formatter: (val) => `${val.toFixed(2)}%` } },
+      dataLabels: { enabled: false },
+      fill: detailType === 'area' ? { type: 'gradient', gradient: { shadeIntensity: 1, opacityFrom: 0.4, opacityTo: 0.1 } } : {},
+      stroke: detailType !== 'bar' ? { curve: 'smooth', width: 2 } : {},
+    }
+  }, [detailType, detailData])
+
+  const detailSeries = useMemo(() => {
+    if (detailType === 'flow') {
+      return [
+        { name: 'Budget', data: detailData.map(d => d.budget) },
+        { name: 'Actual', data: detailData.map(d => d.actual) },
+      ]
+    }
+    return [{ name: 'Variance %', data: detailData.map(d => d.pct || 0) }]
+  }, [detailType, detailData])
+
+  const chartTypeButtons = [
+    { id: 'bar', label: 'Bar' },
+    { id: 'line', label: 'Line' },
+    { id: 'area', label: 'Area' },
+  ]
+
+  const detailTypeButtons = [
+    { id: 'flow', label: '💰 Money Flow' },
+    { id: 'bar', label: '📊 Bar %' },
+    { id: 'line', label: '📈 Line %' },
+    { id: 'area', label: '🏔️ Area %' },
+  ]
 
   return (
     <div className="bg-slate-800 rounded-xl border border-slate-700 p-5">
@@ -116,39 +156,74 @@ export default function VarianceChart({ variances, onRefClick }) {
               <button
                 onClick={() => setExpanded(false)}
                 className="text-slate-400 hover:text-slate-200 mr-2"
-              >
-                ← Back
-              </button>
-              {selectedAccount} — Period Breakdown
+              >← Back</button>
+              {selectedAccount}
             </span>
           ) : (
             'Variance by Account'
           )}
         </h2>
         {!expanded && (
-          <p className="text-xs text-slate-500">Click a bar to see period detail</p>
+          <div className="flex gap-1">
+            {chartTypeButtons.map(btn => (
+              <button
+                key={btn.id}
+                onClick={() => setChartType(btn.id)}
+                className={`text-xs px-3 py-1.5 rounded transition-colors ${
+                  chartType === btn.id
+                    ? 'bg-slate-700 text-emerald-400'
+                    : 'text-slate-500 hover:text-slate-300'
+                }`}
+              >{btn.label}</button>
+            ))}
+          </div>
         )}
       </div>
 
+      {!expanded && (
+        <p className="text-xs text-slate-500 mb-3">Click a bar to see period detail</p>
+      )}
+
       {expanded ? (
         <div key={selectedAccount} className="reveal-animation">
+          {/* Detail chart type selector */}
+          <div className="flex gap-1 mb-4">
+            {detailTypeButtons.map(btn => (
+              <button
+                key={btn.id}
+                onClick={() => setDetailType(btn.id)}
+                className={`text-xs px-3 py-1.5 rounded transition-colors ${
+                  detailType === btn.id
+                    ? 'bg-slate-700 text-emerald-400'
+                    : 'text-slate-500 hover:text-slate-300'
+                }`}
+              >{btn.label}</button>
+            ))}
+          </div>
+
           <Chart
             options={detailOptions}
-            series={[{ name: 'Variance %', data: detailData.map(d => d.pct || 0) }]}
-            type="bar"
+            series={detailSeries}
+            type={detailType === 'flow' ? 'bar' : detailType}
             height={350}
           />
+
           <div className="mt-3 text-xs text-slate-500">
-            Showing {detailData.length} periods for {selectedAccount}
+            {detailType === 'flow'
+              ? `Budget vs Actual for ${selectedAccount} across ${detailData.length} periods`
+              : `Variance % for ${selectedAccount} across ${detailData.length} periods`
+            }
           </div>
         </div>
       ) : (
-        <Chart
-          options={mainOptions}
-          series={[{ name: 'Variance Amount', data: mainData.map(d => d.total) }]}
-          type="bar"
-          height={350}
-        />
+        mainData.length > 0 && (
+          <Chart
+            options={mainOptions}
+            series={[{ name: 'Variance Amount', data: mainData.map(d => d.total) }]}
+            type={chartType === 'area' ? 'area' : chartType}
+            height={350}
+          />
+        )
       )}
     </div>
   )
