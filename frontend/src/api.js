@@ -1,4 +1,5 @@
-const API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+// Use relative URL when served by nginx (Docker), absolute URL in dev
+const API = import.meta.env.VITE_API_URL || ''
 
 export async function fetchSummary(sessionId) {
   const res = await fetch(`${API}/api/summary?session_id=${sessionId}`)
