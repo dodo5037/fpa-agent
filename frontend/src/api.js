@@ -108,3 +108,13 @@ export async function clearAuditLog() {
   const res = await fetch(`${API}/api/audit/clear`, { method: 'POST' })
   return res.json()
 }
+
+export async function fetchSessionData(sessionId) {
+  const res = await fetch(`${API}/api/data/${sessionId}`)
+  return res.json()
+}
+
+export async function clearSessionData(sessionId) {
+  const res = await fetch(`${API}/api/data/${sessionId}`, { method: 'DELETE' })
+  return res.json()
+}

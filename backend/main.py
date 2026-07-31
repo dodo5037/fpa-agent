@@ -135,15 +135,25 @@ def create_app(conn: duckdb.DuckDBPyConnection = None) -> FastAPI:
         text = content.decode("utf-8")
         reader = csv.DictReader(io.StringIO(text))
 
-        required_cols = {"entity_id", "account_id", "period_id", "scenario", "amount"}
-        if not required_cols.issubset(set(reader.fieldnames or [])):
+        # Support both formats:
+        # Extended: entity_id,account_id,account_name,account_type,category,period_id,scenario,amount
+        # Basic:    entity_id,account_id,period_id,scenario,amount
+        required_basic = {"entity_id", "account_id", "period_id", "scenario", "amount"}
+        if not required_basic.issubset(set(reader.fieldnames or [])):
             raise HTTPException(status_code=400, detail="CSV must have columns: entity_id, account_id, period_id, scenario, amount")
 
         rows = list(reader)
         if not rows:
             raise HTTPException(status_code=400, detail="CSV has no data rows")
 
-        data = [(r["entity_id"], r["account_id"], r["period_id"], r["scenario"], float(r["amount"]), session_id) for r in rows]
+        has_metadata = "account_name" in reader.fieldnames
+        data = []
+        for r in rows:
+            row = (
+                r["entity_id"], r["account_id"], r["period_id"],
+                r["scenario"], float(r["amount"]), session_id
+            )
+            data.append(row)
 
         # Auto-insert missing dimension rows
         entities = {d[0] for d in data}
@@ -154,10 +164,39 @@ def create_app(conn: duckdb.DuckDBPyConnection = None) -> FastAPI:
             exists = app.state.db.execute("SELECT COUNT(*) FROM entities WHERE entity_id = ?", [eid]).fetchone()[0]
             if exists == 0:
                 app.state.db.execute("INSERT INTO entities VALUES (?, ?)", [eid, eid])
-        for aid in accounts:
-            exists = app.state.db.execute("SELECT COUNT(*) FROM accounts WHERE account_id = ?", [aid]).fetchone()[0]
-            if exists == 0:
-                app.state.db.execute("INSERT INTO accounts VALUES (?, ?, 'revenue', 'Uncategorized')", [aid, aid])
+
+        if has_metadata:
+            # Use metadata from the CSV
+            account_meta = {}
+            for r in rows:
+                aid = r["account_id"]
+                if aid not in account_meta:
+                    account_meta[aid] = {
+                        "name": r.get("account_name", aid),
+                        "type": r.get("account_type", "revenue"),
+                        "category": r.get("category", "Uncategorized"),
+                    }
+            for aid, meta in account_meta.items():
+                exists = app.state.db.execute("SELECT COUNT(*) FROM accounts WHERE account_id = ?", [aid]).fetchone()[0]
+                if exists == 0:
+                    app.state.db.execute(
+                        "INSERT INTO accounts VALUES (?, ?, ?, ?)",
+                        [aid, meta["name"], meta["type"], meta["category"]]
+                    )
+                else:
+                    # Update existing account with proper metadata
+                    app.state.db.execute(
+                        "UPDATE accounts SET account_name = ?, account_type = ?, category = ? WHERE account_id = ?",
+                        [meta["name"], meta["type"], meta["category"], aid]
+                    )
+        else:
+            for aid in accounts:
+                exists = app.state.db.execute("SELECT COUNT(*) FROM accounts WHERE account_id = ?", [aid]).fetchone()[0]
+                if exists == 0:
+                    app.state.db.execute(
+                        "INSERT INTO accounts VALUES (?, ?, 'revenue', 'Uncategorized')", [aid, aid]
+                    )
+
         for pid in periods:
             exists = app.state.db.execute("SELECT COUNT(*) FROM periods WHERE period_id = ?", [pid]).fetchone()[0]
             if exists == 0:
@@ -177,6 +216,32 @@ def create_app(conn: duckdb.DuckDBPyConnection = None) -> FastAPI:
             status_code=201,
             media_type="application/json"
         )
+
+    # ── Data Viewer (per session) ─────────────────────────────────────
+    @app.get("/api/data/{session_id}")
+    def get_session_data(session_id: str):
+        """Get all raw budget_actuals rows for a session."""
+        sql = """
+        SELECT ba.entity_id, ba.account_id, a.account_name, a.account_type,
+               a.category, ba.period_id, ba.scenario, ba.amount
+        FROM budget_actuals ba
+        LEFT JOIN accounts a ON ba.account_id = a.account_id
+        WHERE ba.session_id = ?
+        ORDER BY ba.entity_id, ba.period_id, ba.account_id, ba.scenario
+        """
+        rows = app.state.db.execute(sql, [session_id]).fetchall()
+        cols = [d[0] for d in app.state.db.description]
+        results = [dict(zip(cols, row)) for row in rows]
+        return {"results": results, "count": len(results), "session_id": session_id}
+
+    @app.delete("/api/data/{session_id}")
+    def clear_session_data(session_id: str):
+        """Clear all budget_actuals for a session (keeps the session itself)."""
+        count = app.state.db.execute(
+            "SELECT COUNT(*) FROM budget_actuals WHERE session_id = ?", [session_id]
+        ).fetchone()[0]
+        app.state.db.execute("DELETE FROM budget_actuals WHERE session_id = ?", [session_id])
+        return {"deleted": count}
 
     # ── Audit ─────────────────────────────────────────────────────────
     @app.get("/api/audit/log")

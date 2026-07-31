@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   fetchSummary, fetchVariances, fetchAnomalies, fetchAuditLog, fetchAuditEntry,
   askQuestion, generateMemo, uploadData,
@@ -14,25 +14,21 @@ import MemoViewer from './components/MemoViewer'
 import AuditTrail from './components/AuditTrail'
 import UploadPanel from './components/UploadPanel'
 import SettingsPanel from './components/SettingsPanel'
+import DataViewer from './components/DataViewer'
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard')
   const [sessionId, setSessionId] = useState('default')
   const [sessions, setSessions] = useState([])
 
-  // Data state — cached per session
   const [summary, setSummary] = useState(null)
   const [variances, setVariances] = useState([])
   const [anomalies, setAnomalies] = useState([])
   const [loading, setLoading] = useState(false)
 
-  // Audit state
   const [auditLog, setAuditLog] = useState([])
   const [selectedRef, setSelectedRef] = useState(null)
   const [auditDetail, setAuditDetail] = useState(null)
-
-  // Track which sessions we've loaded data for
-  const loadedSessions = useRef(new Set())
 
   const loadSessionData = useCallback(async (sid) => {
     setLoading(true)
@@ -45,7 +41,6 @@ export default function App() {
       setSummary(sum)
       setVariances(vars.results || [])
       setAnomalies(anoms.results || [])
-      loadedSessions.current.add(sid)
     } catch {
       setSummary(null)
       setVariances([])
@@ -56,28 +51,27 @@ export default function App() {
   }, [])
 
   const refreshSessions = useCallback(async () => {
-    const res = await fetchSessions()
-    setSessions(res.sessions || [])
+    try {
+      const res = await fetchSessions()
+      setSessions(res.sessions || [])
+    } catch {}
   }, [])
 
-  // On mount: load sessions + initial data
+  // On mount: load sessions + data for default session
   useEffect(() => {
     refreshSessions()
     loadSessionData('default')
   }, [refreshSessions, loadSessionData])
 
-  // When session changes: only load if we haven't cached it
+  // Switch session — always loads from DB (data persists in DuckDB)
   const switchSession = useCallback((sid) => {
+    if (sid === sessionId) return
     setSessionId(sid)
-    if (!loadedSessions.current.has(sid)) {
-      loadSessionData(sid)
-    }
-    // If already loaded, data stays as-is (cached)
-  }, [loadSessionData])
+    loadSessionData(sid)
+  }, [sessionId, loadSessionData])
 
+  // After upload: reload data for current session + refresh session list
   const handleUploadComplete = useCallback(async () => {
-    // After upload, reload data for the current session
-    loadedSessions.current.delete(sessionId)
     await loadSessionData(sessionId)
     await refreshSessions()
     setActiveTab('dashboard')
@@ -105,14 +99,13 @@ export default function App() {
     if (confirm('Delete this session and all its data?')) {
       await deleteSession(id)
       await refreshSessions()
-      if (sessionId === id) {
-        switchSession('default')
-      }
+      if (sessionId === id) switchSession('default')
     }
   }
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: '⊞' },
+    { id: 'data', label: 'Data', icon: '📋' },
     { id: 'variance', label: 'Variance Table', icon: '▤' },
     { id: 'anomalies', label: 'Anomalies', icon: '⚠' },
     { id: 'qa', label: 'Ask AI', icon: '◈' },
@@ -126,13 +119,12 @@ export default function App() {
     <div className="min-h-screen bg-slate-900 text-slate-100 flex">
       {/* Sidebar */}
       <aside className="w-64 bg-slate-800/50 border-r border-slate-700 flex flex-col h-screen sticky top-0">
-        {/* Logo */}
         <div className="px-5 py-5 border-b border-slate-700">
           <h1 className="text-lg font-semibold tracking-tight">FP&A Agent</h1>
           <p className="text-xs text-slate-500 mt-0.5">Dashboard v2.0</p>
         </div>
 
-        {/* Sessions Section */}
+        {/* Sessions */}
         <div className="px-3 py-3 border-b border-slate-700">
           <div className="flex items-center justify-between mb-2 px-2">
             <span className="text-xs font-medium text-slate-400 uppercase tracking-wider">Sessions</span>
@@ -172,7 +164,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* Navigation */}
+        {/* Nav */}
         <nav className="flex-1 px-3 py-3 space-y-1 overflow-y-auto">
           {navItems.map(item => (
             <button
@@ -190,7 +182,6 @@ export default function App() {
           ))}
         </nav>
 
-        {/* Footer */}
         <div className="px-5 py-3 border-t border-slate-700">
           <p className="text-xs text-slate-600">
             Session: <span className="text-slate-400">{sessionId}</span>
@@ -198,9 +189,8 @@ export default function App() {
         </div>
       </aside>
 
-      {/* Main Content */}
+      {/* Main */}
       <main className="flex-1 overflow-y-auto">
-        {/* Top Bar */}
         <header className="border-b border-slate-700 bg-slate-800/30 px-6 py-3 flex items-center justify-between">
           <h2 className="text-sm text-slate-400">
             {navItems.find(n => n.id === activeTab)?.label || 'Dashboard'}
@@ -210,10 +200,9 @@ export default function App() {
           )}
         </header>
 
-        {/* Content Area with transition */}
-        <div key={activeTab} className="p-6 reveal-animation">
+        <div key={`${activeTab}-${sessionId}`} className="p-6 reveal-animation">
           {activeTab === 'dashboard' && (
-            summary ? (
+            summary && summary.total_revenue_budget > 0 ? (
               <div className="space-y-6">
                 <KPICards summary={summary} onRefClick={handleRefClick} />
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -237,6 +226,10 @@ export default function App() {
                 </button>
               </div>
             )
+          )}
+
+          {activeTab === 'data' && (
+            <DataViewer sessionId={sessionId} />
           )}
 
           {activeTab === 'variance' && (
