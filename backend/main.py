@@ -68,6 +68,21 @@ def create_app(conn: duckdb.DuckDBPyConnection = None) -> FastAPI:
         s["row_count"] = get_session_row_count(app.state.db, session_id)
         return s
 
+    @app.get("/api/sessions/{session_id}/version")
+    def session_version(session_id: str):
+        """Cheap poll endpoint: returns row count + data hash.
+        Frontend polls this every 60s; only reloads data if hash changed."""
+        import hashlib
+        s = get_session(app.state.db, session_id)
+        if s is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        row_count = get_session_row_count(app.state.db, session_id)
+        # Hash of row_count + session created_at = stable unless data changes
+        data_hash = hashlib.sha256(
+            f"{session_id}|{row_count}|{s['created_at']}".encode()
+        ).hexdigest()[:12]
+        return {"row_count": row_count, "data_hash": data_hash, "updated_at": s["created_at"]}
+
     # ── Health ────────────────────────────────────────────────────────
     @app.get("/api/health")
     def health():

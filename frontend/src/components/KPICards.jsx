@@ -4,6 +4,20 @@ function formatCurrency(val) {
 }
 
 export default function KPICards({ summary, onRefClick }) {
+  // Null guard — render empty placeholder if summary is null
+  if (!summary) {
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {[1,2,3].map(i => (
+          <div key={i} className="bg-slate-800 rounded-xl p-5 border border-slate-700 animate-pulse">
+            <div className="h-4 bg-slate-700 rounded w-24 mb-2"></div>
+            <div className="h-8 bg-slate-700 rounded w-32 mb-1"></div>
+            <div className="h-3 bg-slate-700 rounded w-20"></div>
+          </div>
+        ))}
+      </div>
+    )
+  }
   const cards = [
     {
       label: 'Total Revenue (Actual)',
