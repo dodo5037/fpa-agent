@@ -7,6 +7,9 @@
 
 body {
   font-family: 'Inter', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 .font-mono-fin {
@@ -16,29 +19,118 @@ body {
 
 /* Reveal animation for chart expand transitions */
 @keyframes reveal {
-  from {
-    opacity: 0;
-    transform: scaleY(0.8);
-  }
-  to {
-    opacity: 1;
-    transform: scaleY(1);
-  }
+  from { opacity: 0; transform: scaleY(0.8); }
+  to   { opacity: 1; transform: scaleY(1); }
+}
+.reveal-animation { animation: reveal 0.4s ease-out forwards; }
+
+/* P2.4: Staggered card entrance */
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.card-enter {
+  animation: slideUp 0.5s ease-out forwards;
+  opacity: 0;
+}
+.card-enter:nth-child(1) { animation-delay: 0.05s; }
+.card-enter:nth-child(2) { animation-delay: 0.12s; }
+.card-enter:nth-child(3) { animation-delay: 0.19s; }
+.card-enter:nth-child(4) { animation-delay: 0.26s; }
+.card-enter:nth-child(5) { animation-delay: 0.33s; }
+
+/* P2.4: Count-up animation for KPI numbers */
+@keyframes countUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.count-up {
+  animation: countUp 0.8s ease-out forwards;
 }
 
-.reveal-animation {
-  animation: reveal 0.4s ease-out forwards;
+/* P2.4: Chart mount transition */
+@keyframes chartEnter {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.chart-enter {
+  animation: chartEnter 0.4s ease-out forwards;
 }
 
 /* Scrollbar styling for dark mode */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: #1e293b; }
+::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+
+/* P3: Dashboard grid layout */
+.dashboard-grid {
+  min-height: 600px;
 }
-::-webkit-scrollbar-track {
-  background: #1e293b;
+.dashboard-grid .react-grid-item {
+  transition: all 200ms ease;
 }
-::-webkit-scrollbar-thumb {
-  background: #475569;
-  border-radius: 4px;
+.dashboard-grid .react-grid-item.react-grid-placeholder {
+  background: rgba(52, 211, 153, 0.15);
+  border-radius: 12px;
+  border: 2px dashed rgba(52, 211, 153, 0.3);
+  opacity: 0.5;
+}
+.dashboard-grid .react-resizable-handle::after {
+  border-right-color: #64748b;
+  border-bottom-color: #64748b;
+}
+.dashboard-widget {
+  height: 100%;
+  overflow: hidden;
+}
+/* Force all direct children of dashboard-widget to fill the grid cell */
+.dashboard-widget > * {
+  height: 100%;
+}
+
+/* L2.1: Multi-edge resize handles — neon teal on hover */
+.dashboard-grid .react-resizable-handle {
+  opacity: 0;
+  transition: opacity 200ms;
+}
+.dashboard-grid .react-grid-item:hover .react-resizable-handle {
+  opacity: 0.6;
+}
+.dashboard-grid .react-resizable-handle::after {
+  border-color: #64748b;
+}
+.dashboard-grid .react-grid-item:hover .react-resizable-handle::after {
+  border-color: #00E5FF;
+}
+
+/* L2.3: Wobble spring animation on widget drop */
+@keyframes wobble {
+  0%   { transform: scale(0.92); }
+  40%  { transform: scale(1.04); }
+  70%  { transform: scale(0.98); }
+  100% { transform: scale(1); }
+}
+.widget-wobble {
+  animation: wobble 0.5s ease-out;
+}
+
+/* Chart smart label truncation */
+.chart-label {
+  max-width: 100px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+/* Q2.1: Animated gradient progress button */
+@keyframes progressFill {
+  from { background-position: 100% 0; }
+  to   { background-position: 0 0; }
+}
+.btn-progress {
+  background: linear-gradient(90deg, #059669 50%, #475569 50%);
+  background-size: 200% 100%;
+  animation: progressFill 1.5s ease-in-out infinite;
+  color: white;
 }

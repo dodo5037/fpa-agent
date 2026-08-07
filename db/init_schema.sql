@@ -53,8 +53,6 @@ CREATE TABLE IF NOT EXISTS settings (
     value VARCHAR NOT NULL
 );
 
--- Default: audit logging OFF
-INSERT OR IGNORE INTO settings (key, value) VALUES ('audit_enabled', 'false');
 INSERT OR IGNORE INTO settings (key, value) VALUES ('ollama_base_url', '');
 INSERT OR IGNORE INTO settings (key, value) VALUES ('ollama_model', '');
 
@@ -77,3 +75,33 @@ CREATE SEQUENCE IF NOT EXISTS seq_uploaded_files START 1;
 
 -- Add session_id column to budget_actuals (data isolated per session)
 ALTER TABLE budget_actuals ADD COLUMN IF NOT EXISTS session_id VARCHAR DEFAULT 'default';
+
+-- ── A1: Operational Audit Trail (mandatory, always-on) ──────────────
+CREATE TABLE IF NOT EXISTS audit_logs (
+    log_id         UUID PRIMARY KEY DEFAULT uuid(),
+    timestamp      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    session_id     VARCHAR NOT NULL,
+    event_category VARCHAR NOT NULL CHECK (
+        event_category IN ('DATA_INGESTION', 'SYSTEM_CALCULATION',
+                           'ANOMALY_DETECTION', 'DATA_DELETION')
+    ),
+    description    TEXT NOT NULL,
+    metadata       JSON
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_session
+    ON audit_logs(session_id);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp
+    ON audit_logs(timestamp DESC);
+
+-- ── Q3: AI Conversation History ──────────────────────────────────────
+CREATE TABLE IF NOT EXISTS ai_history (
+    id            INTEGER PRIMARY KEY,
+    session_id    VARCHAR NOT NULL,
+    type          VARCHAR NOT NULL CHECK (type IN ('question', 'memo')),
+    prompt        TEXT NOT NULL,
+    response_text TEXT NOT NULL,
+    timestamp     TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE SEQUENCE IF NOT EXISTS seq_ai_history START 1;

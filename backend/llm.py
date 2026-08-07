@@ -5,6 +5,10 @@ CRITICAL RULES:
     and narrates pre-computed results.
   - All SQL is validated before execution: SELECT only, allowed tables only.
   - All LLM-generated SQL runs through the audit-logged query wrapper.
+
+P1: Async httpx — FastAPI client disconnection cancels downstream Ollama call.
+P2: Aggregated YTD data for memos — no per-period confusion.
+P3: Empty SQL fallback — graceful error message instead of crash.
 """
 import json
 import re
@@ -21,25 +25,40 @@ ALLOWED_TABLES = {"budget_actuals", "accounts", "entities", "periods"}
 
 # Schema description for the LLM prompt
 SCHEMA_DESC = """
-You are a SQL assistant for a Financial Planning & Analysis (FP&A) database.
-The database has these tables:
+You are a DuckDB SQL expert for a Financial Planning & Analysis (FP&A) database.
 
-1. budget_actuals (entity_id VARCHAR, account_id VARCHAR, period_id VARCHAR,
-   scenario VARCHAR ['budget' or 'actual'], amount DECIMAL)
+CRITICAL — the ONLY table you can query is budget_actuals. Its EXACT columns are:
+  session_id VARCHAR
+  entity_id VARCHAR
+  account_id VARCHAR
+  period_id VARCHAR
+  scenario VARCHAR  -- 'actual' or 'budget'
+  amount DECIMAL
 
-2. accounts (account_id VARCHAR, account_name VARCHAR,
-   account_type VARCHAR ['revenue' or 'expense'], category VARCHAR)
+THERE IS NO account_type column. To classify revenue vs expense, you MUST use
+LIKE on account_id:
 
-3. entities (entity_id VARCHAR, entity_name VARCHAR)
+  Revenue accounts:
+    LOWER(account_id) LIKE '%revenue%' OR LOWER(account_id) LIKE '%sales%'
+       OR LOWER(account_id) LIKE '%income%'
 
-4. periods (period_id VARCHAR, fiscal_year INTEGER, period_num INTEGER,
-   period_label VARCHAR)
+  Expense accounts:
+    LOWER(account_id) LIKE '%expense%' OR LOWER(account_id) LIKE '%cost%'
+       OR LOWER(account_id) LIKE '%fee%' OR LOWER(account_id) LIKE '%salary%'
+       OR LOWER(account_id) LIKE '%payroll%' OR LOWER(account_id) LIKE '%rent%'
+       OR LOWER(account_id) LIKE '%util%' OR LOWER(account_id) LIKE '%marketing%'
 
-Rules:
+SESSION ISOLATION: EVERY query MUST include
+  WHERE session_id = '<the_session_id_value>'
+to prevent data leakage across sessions. The session_id is passed in the
+question context below.
+
+STRICT RULES:
 - Generate ONLY SELECT queries.
 - Never use INSERT, UPDATE, DELETE, DROP, ALTER, or CREATE.
-- Use proper SQL syntax for DuckDB.
+- Use proper DuckDB SQL syntax.
 - Return ONLY the SQL query, no explanation.
+- Do NOT JOIN the accounts table — classify via account_id LIKE patterns.
 """
 
 
@@ -90,12 +109,13 @@ def validate_sql(sql: str) -> bool:
     return True
 
 
-# ── Ollama API Client ────────────────────────────────────────────────
+# ── Ollama API Client (P1: async with cancellation) ──────────────────
 
-def _call_ollama(prompt: str, conn=None) -> str:
+async def _call_ollama(prompt: str, conn=None) -> str:
     """
-    Call the local Ollama API. Uses settings from DB if available,
-    falls back to config.py defaults.
+    P1: Async call to local Ollama. When FastAPI cancels the request
+    (client disconnect), the async context cancels and httpx aborts
+    the in-flight generation.
     """
     base_url = "http://localhost:11434"
     model = "qwen2.5"
@@ -114,38 +134,40 @@ def _call_ollama(prompt: str, conn=None) -> str:
 
     url = f"{base_url}/api/generate"
 
-    response = httpx.post(
-        url,
-        json={
-            "model": model,
-            "prompt": prompt,
-            "stream": False,
-        },
-        timeout=60.0,
-    )
-    response.raise_for_status()
-    data = response.json()
-    return data.get("response", "")
+    async with httpx.AsyncClient(timeout=None) as client:
+        response = await client.post(
+            url,
+            json={
+                "model": model,
+                "prompt": prompt,
+                "stream": False,
+            },
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data.get("response", "")
 
 
 # ── NL-to-SQL ────────────────────────────────────────────────────────
 
-def translate_to_sql(question: str, conn: duckdb.DuckDBPyConnection) -> str:
+async def translate_to_sql(question: str, conn: duckdb.DuckDBPyConnection, session_id: str = "default") -> str:
     """
     Translate a natural language question into a validated SQL query.
 
     Args:
         question: Plain-English question from the user.
         conn: DuckDB connection (unused for now, but available for schema introspection).
+        session_id: Active session ID — injected into the prompt so the LLM
+                    uses the real UUID, not a literal placeholder.
 
     Returns:
         Validated SQL query string.
 
     Raises:
-        ValueError: If the LLM-generated SQL fails validation.
+        ValueError: If the LLM-generated SQL fails validation or is empty.
     """
-    prompt = f"{SCHEMA_DESC}\n\nQuestion: {question}\n\nSQL:"
-    raw_response = _call_ollama(prompt, conn)
+    prompt = f"{SCHEMA_DESC}\n\nThe active session_id is: {session_id}\n\nQuestion: {question}\n\nSQL:"
+    raw_response = await _call_ollama(prompt, conn)
 
     # Extract SQL from response (may have markdown code fences)
     sql = raw_response.strip()
@@ -155,71 +177,152 @@ def translate_to_sql(question: str, conn: duckdb.DuckDBPyConnection) -> str:
         sql = "\n".join(lines[1:-1]) if lines[-1].strip() == "```" else "\n".join(lines[1:])
     sql = sql.strip()
 
+    # P3: Validate before raising — return a sentinel for empty SQL
+    if not sql or not sql.strip():
+        raise ValueError("EMPTY_SQL")
+
     # Validate before returning
     validate_sql(sql)
     return sql
 
 
-def ask_question(
+async def ask_question(
     question: str,
     conn: duckdb.DuckDBPyConnection,
+    session_id: str = "default",
 ) -> dict:
     """
     Answer a plain-English question by: translating to SQL, validating,
     executing through the audit-logged wrapper, and returning results.
 
+    P3: If the LLM can't generate valid SQL, return a graceful fallback
+    message instead of crashing.
+
     Args:
         question: Plain-English question.
         conn: DuckDB connection.
+        session_id: Active session — injected into prompt and query params.
 
     Returns:
         Dict with: results (list of dicts), sql (str), calc_ref (str).
     """
-    sql = translate_to_sql(question, conn)
+    try:
+        sql = await translate_to_sql(question, conn, session_id)
+    except ValueError as e:
+        if "EMPTY_SQL" in str(e):
+            # P3: Graceful fallback — LLM couldn't generate a query
+            return {
+                "results": [],
+                "sql": "",
+                "calc_ref": None,
+                "fallback": True,
+                "message": (
+                    "I couldn't generate a specific data query for that question. "
+                    "Could you rephrase it to be more specific about the accounts, "
+                    "entities, or periods you want to analyze?"
+                ),
+            }
+        raise
+
     results, calc_ref = execute_logged(conn, sql, params={"question": question})
     return {"results": results, "sql": sql, "calc_ref": calc_ref}
 
 
-# ── Memo Generation ──────────────────────────────────────────────────
+# ── Memo Generation (P2: aggregated YTD + strict prompt) ────────────
 
-def generate_memo(
-    variance_data: list[dict],
+async def generate_memo(
     conn: duckdb.DuckDBPyConnection,
+    session_id: str = "default",
 ) -> str:
     """
-    Generate a natural-language memo from pre-computed variance results.
+    P2: Generate a natural-language memo from AGGREGATED YTD variances.
+
+    Instead of feeding per-period rows (which confuse the LLM into
+    seeing "conflicting signs"), we aggregate by account_id across
+    all periods and feed the net totals.
 
     CRITICAL: The LLM receives only the already-computed variance numbers.
     It never sees raw budget/actual figures and is never asked to do math.
 
     Args:
-        variance_data: List of variance result dicts (from calculate_variances).
         conn: DuckDB connection.
+        session_id: Session to generate memo for.
 
     Returns:
         Memo text string.
     """
-    # Prepare a summary of pre-computed results for the LLM
-    # Only include computed fields, not raw data
+    from backend.variance_engine import calculate_variances
+
+    # Get aggregated YTD variances
+    variances = calculate_variances(conn, session_id=session_id)
+
+    # P2: Aggregate by account_id across all periods
+    by_account = {}
+    for v in variances:
+        aid = v["account_name"]
+        if aid not in by_account:
+            by_account[aid] = {
+                "account_name": aid,
+                "account_type": v["account_type"],
+                "total_variance": 0.0,
+                "total_variance_pct": 0.0,
+                "total_budget": 0.0,
+                "total_actual": 0.0,
+                "count": 0,
+            }
+        by_account[aid]["total_variance"] += float(v["variance_amount"])
+        by_account[aid]["total_budget"] += float(v.get("budget_amount", 0) or 0)
+        by_account[aid]["total_actual"] += float(v.get("actual_amount", 0) or 0)
+        by_account[aid]["count"] += 1
+
+    # Compute aggregate variance percentages
+    for aid, agg in by_account.items():
+        if agg["count"] > 0:
+            agg["total_variance_pct"] = sum(
+                v["variance_pct"] for v in variances if v["account_name"] == aid
+            ) / agg["count"]
+        # Determine if favorable (revenue up = favorable, expense down = favorable)
+        if agg["account_type"] == "revenue":
+            agg["favorable"] = agg["total_variance"] >= 0
+        else:
+            agg["favorable"] = agg["total_variance"] <= 0
+
+    # Sort by absolute variance amount (largest first)
+    sorted_accounts = sorted(
+        by_account.values(),
+        key=lambda a: abs(a["total_variance"]),
+        reverse=True,
+    )
+
+    # Build summary from aggregated data
     summary_lines = []
-    for row in variance_data[:20]:  # Limit to prevent prompt overflow
+    for row in sorted_accounts[:20]:
+        fav_word = "favorable" if row["favorable"] else "unfavorable"
         summary_lines.append(
-            f"- {row['account_name']}: variance ${row['variance_amount']} "
-            f"({row['variance_pct']}%), {'favorable' if row['favorable'] else 'unfavorable'}"
+            f"- {row['account_name']} ({row['account_type']}): "
+            f"net YTD variance ${row['total_variance']:,.2f} "
+            f"(~{row['total_variance_pct']:.1f}%), {fav_word}"
         )
 
     summary_text = "\n".join(summary_lines)
 
     prompt = f"""You are a financial analyst writing a variance memo.
-Below are PRE-COMPUTED variance results. Do NOT perform any calculations.
-Simply write a clear, professional memo summarizing these findings.
+Below are PRE-COMPUTED Year-to-Date aggregated variance results.
+Do NOT perform any calculations. Do NOT mention "conflicting signs"
+or per-period fluctuations — these are NET totals.
 
-Variance Results:
+CRITICAL: Positive numbers for REVENUE accounts are favorable (earned more).
+Positive numbers for EXPENSE accounts are UNFAVORABLE (overspent).
+Negative numbers for revenue are unfavorable (shortfall).
+Negative numbers for expense are favorable (saved money).
+Interpret these correctly in your memo.
+
+Variance Results (aggregated YTD):
 {summary_text}
 
 Write a concise memo (3-5 paragraphs) highlighting key variances,
 favorable and unfavorable trends, and notable anomalies. Reference the
 exact figures provided above. Do not invent numbers."""
 
-    memo = _call_ollama(prompt, conn)
+    memo = await _call_ollama(prompt, conn)
     return memo.strip()

@@ -9,6 +9,13 @@ from backend.db import init_db
 from db.seed import load_seed_data
 
 
+@pytest.fixture(autouse=True)
+def _reset_dedup_cache():
+    """Clear the module-level dedup cache between tests."""
+    from backend.audit import _clear_dedup_cache
+    _clear_dedup_cache()
+
+
 @pytest.fixture
 def temp_db_path():
     fd, path = tempfile.mkstemp(suffix=".duckdb")
@@ -110,13 +117,13 @@ class TestAuditQueryWrapper:
         parsed = json.loads(logged_params)
         assert parsed["scenario"] == "budget"
 
-    def test_audit_off_by_default(self, db_conn):
-        """Audit logging should be OFF by default."""
+    def test_audit_always_on(self, db_conn):
+        """A1: Audit is mandatory — always logs queries."""
         from backend.audit import execute_logged
         execute_logged(db_conn, "SELECT 1 AS val", params={})
         count = db_conn.execute(
             "SELECT COUNT(*) FROM calculation_log").fetchone()[0]
-        assert count == 0
+        assert count == 1
 
 
 class TestResultRefLookup:

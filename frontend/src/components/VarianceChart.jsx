@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react'
 import Chart from 'react-apexcharts'
+import WidgetMenu from './WidgetMenu'
 
 export default function VarianceChart({ variances, onRefClick }) {
   const [expanded, setExpanded] = useState(false)
@@ -9,6 +10,7 @@ export default function VarianceChart({ variances, onRefClick }) {
 
   const mainData = useMemo(() => {
     if (!variances || variances.length === 0) return []
+    const truncate = (s) => s.length > 18 ? s.slice(0, 16) + '...' : s
     const byAccount = {}
     variances.forEach(v => {
       if (!v.account_name) return
@@ -19,7 +21,7 @@ export default function VarianceChart({ variances, onRefClick }) {
       byAccount[v.account_name].count++
     })
     return Object.entries(byAccount).map(([name, data]) => ({
-      name, total: data.total, type: data.type,
+      name, displayName: truncate(name), total: data.total, type: data.type,
     }))
   }, [variances])
 
@@ -62,19 +64,19 @@ export default function VarianceChart({ variances, onRefClick }) {
       },
     },
     plotOptions: {
-      bar: { borderRadius: 6, horizontal: false },
+      bar: { borderRadius: 6, horizontal: false, minHeight: 4 },
       pie: { expandOnClick: true, dataLabels: { offset: -10 }, donut: { size: '55%' } },
     },
     colors: mainColors,
-    labels: mainData.map(d => d.name),
+    labels: mainData.map(d => d.displayName),
     xaxis: chartType !== 'pie' && chartType !== 'donut' ? {
-      categories: mainData.map(d => d.name),
+      categories: mainData.map(d => d.displayName),
       labels: { style: { colors: '#94a3b8', fontSize: '11px' }, rotate: -15 },
       axisBorder: { show: false }, axisTicks: { show: false },
-    } : undefined,
+    } : {},
     yaxis: chartType !== 'pie' && chartType !== 'donut' ? {
       labels: { style: { colors: '#94a3b8' } },
-    } : undefined,
+    } : {},
     grid: { show: false },
     legend: { show: true, position: 'right', labels: { colors: '#94a3b8' }, fontSize: '12px' } ,
     tooltip: {
@@ -96,7 +98,7 @@ export default function VarianceChart({ variances, onRefClick }) {
     },
     dataLabels: chartType === 'pie' || chartType === 'donut' ? {
       enabled: true,
-      formatter: (val, opts) => `${opts.w.config.series[opts.seriesIndex].toFixed(1)}%`,
+      formatter: (val) => `${val.toFixed(1)}%`,
       style: { colors: ['#e2e8f0'], fontSize: '12px' },
     } : { enabled: false },
     fill: chartType === 'area' ? { type: 'gradient', gradient: { shadeIntensity: 1, opacityFrom: 0.4, opacityTo: 0.1 } }
@@ -199,7 +201,8 @@ export default function VarianceChart({ variances, onRefClick }) {
   ]
 
   return (
-    <div className="bg-slate-800 rounded-xl border border-slate-700 p-5">
+    <div className="bg-slate-800 rounded-xl border border-slate-700 p-5 relative group chart-enter h-full flex flex-col">
+      <WidgetMenu />
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold">
           {expanded ? (
@@ -237,20 +240,24 @@ export default function VarianceChart({ variances, onRefClick }) {
               </button>
             ))}
           </div>
-          <Chart options={detailOptions} series={detailSeries}
-            type={detailType === 'flow' ? 'bar' : detailType} height={350} />
+          <div className="flex-1 min-h-0">
+            <Chart options={detailOptions} series={detailSeries}
+              type={detailType === 'flow' ? 'bar' : detailType} height="100%" />
+          </div>
           <div className="mt-3 text-xs text-slate-500">
             {detailType === 'flow' ? `Budget vs Actual for ${selectedAccount} across ${detailData.length} periods`
               : `Variance % for ${selectedAccount} across ${detailData.length} periods`}
           </div>
         </div>
       ) : (
-        <Chart options={mainOptions}
-          series={chartType === 'pie' || chartType === 'donut'
-            ? mainData.map(d => Math.abs(d.total))
-            : [{ name: 'Variance Amount', data: mainData.map(d => d.total) }]}
-          type={chartType === 'donut' ? 'donut' : chartType === 'pie' ? 'pie' : chartType === 'area' ? 'area' : chartType}
-          height={350} />
+        <div className="flex-1 min-h-0">
+          <Chart key={chartType} options={mainOptions}
+            series={chartType === 'pie' || chartType === 'donut'
+              ? mainData.map(d => Math.abs(d.total))
+              : [{ name: 'Variance Amount', data: mainData.map(d => d.total) }]}
+            type={chartType === 'donut' ? 'donut' : chartType === 'pie' ? 'pie' : chartType === 'area' ? 'area' : chartType}
+            height="100%" />
+        </div>
       )}
     </div>
   )

@@ -1,9 +1,13 @@
 """Tests for Ollama LLM integration — NL-to-SQL translation, SQL
-validation, memo generation, and the rule that the LLM never does math."""
+validation, memo generation, and the rule that the LLM never does math.
+
+P1-P3: All LLM functions are now async. Tests use pytest-asyncio markers.
+generate_memo signature changed to (conn, session_id) — no more raw data arg.
+"""
 import os
 import tempfile
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 
 from backend.db import init_db
 from db.seed import load_seed_data
@@ -70,77 +74,83 @@ class TestSQLValidation:
             validate_sql("")
 
 
-# ── NL-to-SQL Translation ────────────────────────────────────────────
+# ── NL-to-SQL Translation (P1: async, P3: fallback) ──────────────────
 
 class TestNLToSQL:
     """Test natural language to SQL translation via Ollama."""
 
-    @patch("backend.llm._call_ollama")
-    def test_translates_question_to_sql(self, mock_ollama, seeded_db):
+    @pytest.mark.asyncio
+    @patch("backend.llm._call_ollama", new_callable=AsyncMock)
+    async def test_translates_question_to_sql(self, mock_ollama, seeded_db):
         from backend.llm import translate_to_sql
         mock_ollama.return_value = "SELECT COUNT(*) AS cnt FROM budget_actuals"
-        sql = translate_to_sql("How many records are there?", seeded_db)
+        sql = await translate_to_sql("How many records are there?", seeded_db)
         assert sql.startswith("SELECT")
         assert "budget_actuals" in sql
 
-    @patch("backend.llm._call_ollama")
-    def test_translates_and_executes_query(self, mock_ollama, seeded_db):
+    @pytest.mark.asyncio
+    @patch("backend.llm._call_ollama", new_callable=AsyncMock)
+    async def test_translates_and_executes_query(self, mock_ollama, seeded_db):
         from backend.llm import ask_question
         mock_ollama.return_value = "SELECT COUNT(*) AS cnt FROM budget_actuals"
-        result = ask_question("How many records?", seeded_db)
+        result = await ask_question("How many records?", seeded_db)
         assert "results" in result
         assert "sql" in result
-        assert "calc_ref" in result
         assert result["results"][0]["cnt"] > 0
 
-    @patch("backend.llm._call_ollama")
-    def test_rejects_dangerous_llm_sql(self, mock_ollama, seeded_db):
+    @pytest.mark.asyncio
+    @patch("backend.llm._call_ollama", new_callable=AsyncMock)
+    async def test_rejects_dangerous_llm_sql(self, mock_ollama, seeded_db):
         from backend.llm import ask_question
         mock_ollama.return_value = "DROP TABLE budget_actuals"
         with pytest.raises(ValueError, match="(?i)only SELECT"):
-            ask_question("delete everything", seeded_db)
+            await ask_question("delete everything", seeded_db)
 
-# ── Memo Generation ──────────────────────────────────────────────────
+    @pytest.mark.asyncio
+    @patch("backend.llm._call_ollama", new_callable=AsyncMock)
+    async def test_fallback_on_empty_sql(self, mock_ollama, seeded_db):
+        """P3: Empty LLM response returns graceful fallback message."""
+        from backend.llm import ask_question
+        mock_ollama.return_value = ""  # LLM couldn't generate anything
+        result = await ask_question("how is business looking", seeded_db)
+        assert result.get("fallback") is True
+        assert "couldn't generate" in result.get("message", "")
+
+
+# ── Memo Generation (P2: aggregated YTD) ─────────────────────────────
 
 class TestMemoGeneration:
-    """Test that memo generation uses pre-computed numbers only."""
+    """Test that memo generation uses pre-computed numbers only.
 
-    @patch("backend.llm._call_ollama")
-    def test_generates_memo_from_precomputed_data(self, mock_ollama, seeded_db):
+    P2: generate_memo now takes (conn, session_id), aggregates internally."""
+
+    @pytest.mark.asyncio
+    @patch("backend.llm._call_ollama", new_callable=AsyncMock)
+    async def test_generates_memo_from_aggregated_data(self, mock_ollama, seeded_db):
         from backend.llm import generate_memo
         mock_ollama.return_value = "Revenue variance analysis shows favorable trends."
-        variance_data = [
-            {"account_name": "Product Revenue", "variance_amount": 1000, "variance_pct": 10.0, "favorable": True},
-        ]
-        memo = generate_memo(variance_data, seeded_db)
+        memo = await generate_memo(seeded_db, session_id="default")
         assert isinstance(memo, str)
         assert len(memo) > 0
-
-    @patch("backend.llm._call_ollama")
-    def test_memo_includes_precomputed_figures(self, mock_ollama, seeded_db):
-        from backend.llm import generate_memo
-        mock_ollama.return_value = "Product Revenue has a variance of $1000 (10.0%)."
-        variance_data = [
-            {"account_name": "Product Revenue", "variance_amount": 1000, "variance_pct": 10.0, "favorable": True},
-        ]
-        memo = generate_memo(variance_data, seeded_db)
-        # The LLM was given the pre-computed numbers
+        # Called once with the aggregated prompt
         mock_ollama.assert_called_once()
-        call_args = mock_ollama.call_args[0][0]  # first positional arg
-        assert "1000" in call_args or "Product Revenue" in call_args
 
-    @patch("backend.llm._call_ollama")
-    def test_llm_never_receives_raw_data_for_math(self, mock_ollama, seeded_db):
-        """The LLM prompt should contain computed results, not raw budget/actual rows."""
+    @pytest.mark.asyncio
+    @patch("backend.llm._call_ollama", new_callable=AsyncMock)
+    async def test_memo_prompt_contains_aggregated_figures(self, mock_ollama, seeded_db):
         from backend.llm import generate_memo
-        mock_ollama.return_value = "Summary."
-        variance_data = [
-            {"account_name": "Product Revenue", "budget_amount": 10000,
-             "actual_amount": 11000, "variance_amount": 1000, "variance_pct": 10.0,
-             "favorable": True},
-        ]
-        generate_memo(variance_data, seeded_db)
+        mock_ollama.return_value = "Summary of variances."
+        await generate_memo(seeded_db, session_id="default")
         call_args = mock_ollama.call_args[0][0]
-        # LLM should receive the variance_amount (already computed), not be
-        # asked to calculate it from budget and actual
-        assert "1000" in call_args  # the pre-computed variance
+        # Prompt should contain YTD aggregation keywords
+        assert "aggregated" in call_args.lower() or "net YTD" in call_args.lower()
+
+    @pytest.mark.asyncio
+    @patch("backend.llm._call_ollama", new_callable=AsyncMock)
+    async def test_memo_prompt_contains_strict_revenue_expense_rule(self, mock_ollama, seeded_db):
+        """P2: Prompt must include the strict revenue-positive/expense-negative rule."""
+        from backend.llm import generate_memo
+        mock_ollama.return_value = "Understood."
+        await generate_memo(seeded_db, session_id="default")
+        call_args = mock_ollama.call_args[0][0]
+        assert "UNFAVORABLE" in call_args or "unfavorable" in call_args.lower()

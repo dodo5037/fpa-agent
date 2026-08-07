@@ -3,6 +3,8 @@ function formatCurrency(val) {
   return new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val)
 }
 
+import WidgetMenu from './WidgetMenu'
+
 export default function KPICards({ summary, onRefClick }) {
   // Null guard — render empty placeholder if summary is null
   if (!summary) {
@@ -49,10 +51,11 @@ export default function KPICards({ summary, onRefClick }) {
           <div
             key={i}
             onClick={() => card.calc_ref && onRefClick(card.calc_ref)}
-            className="bg-slate-800 rounded-xl p-5 border border-slate-700 hover:border-slate-600 transition-colors cursor-pointer"
+            className="bg-slate-800 rounded-xl p-5 border border-slate-700 hover:border-slate-600 transition-colors cursor-pointer relative group"
           >
+            <WidgetMenu />
             <p className="text-sm text-slate-400 mb-2">{card.label}</p>
-            <p className="font-mono-fin text-2xl font-semibold text-slate-100">
+            <p className="font-mono-fin text-2xl font-semibold text-slate-100 count-up">
               ${formatCurrency(card.value)}
             </p>
             {card.budget != null && (

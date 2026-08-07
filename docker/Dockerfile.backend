@@ -10,7 +10,9 @@ RUN pip install --no-cache-dir \
     duckdb \
     pydantic-settings \
     httpx \
-    python-multipart
+    python-multipart \
+    pytest-asyncio \
+    pytz
 
 # Copy application code
 COPY backend/ /app/backend/

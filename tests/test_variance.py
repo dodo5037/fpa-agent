@@ -9,6 +9,13 @@ from backend.db import init_db
 from db.seed import load_seed_data
 
 
+@pytest.fixture(autouse=True)
+def _reset_dedup_cache():
+    """Clear the module-level dedup cache between tests."""
+    from backend.audit import _clear_dedup_cache
+    _clear_dedup_cache()
+
+
 @pytest.fixture
 def seeded_db():
     """Init schema + load seed data."""

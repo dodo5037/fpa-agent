@@ -1,11 +1,32 @@
+import WidgetMenu from './WidgetMenu'
+
 function formatCurrency(val) {
   if (val == null) return '—'
   return new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val)
 }
 
 export default function AnomalyPanel({ anomalies, onRefClick, fullPage }) {
+  // Null guard — render skeleton placeholder if anomalies is null/undefined
+  if (!anomalies) {
+    return (
+      <div className={`bg-slate-800 rounded-xl border border-slate-700 ${fullPage ? 'p-5' : 'p-4'}`}>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className={`font-semibold ${fullPage ? 'text-lg' : 'text-base'}`}>
+            <span className="text-rose-400">⚠</span> Anomalies
+          </h2>
+          <span className="text-xs text-slate-400">— flagged</span>
+        </div>
+        <div className="space-y-2 animate-pulse">
+          {[1,2,3].map(i => (
+            <div key={i} className="h-16 bg-slate-700 rounded-lg" style={{opacity: 0.5 - i*0.1}}></div>
+          ))}
+        </div>
+      </div>
+    )
+  }
   return (
-    <div className={`bg-slate-800 rounded-xl border border-slate-700 ${fullPage ? 'p-5' : 'p-4'}`}>
+    <div className={`bg-slate-800 rounded-xl border border-slate-700 ${fullPage ? 'p-5' : 'p-4'} relative group h-full flex flex-col`}>
+      <WidgetMenu />
       <div className="flex items-center justify-between mb-4">
         <h2 className={`font-semibold ${fullPage ? 'text-lg' : 'text-base'}`}>
           <span className="text-rose-400">⚠</span> Anomalies
@@ -15,7 +36,7 @@ export default function AnomalyPanel({ anomalies, onRefClick, fullPage }) {
       {anomalies.length === 0 ? (
         <p className="text-sm text-slate-500 py-4 text-center">No anomalies detected</p>
       ) : (
-        <div className={`space-y-2 ${fullPage ? '' : 'max-h-80 overflow-y-auto'}`}>
+        <div className="space-y-2 flex-1 min-h-0 overflow-y-auto">
           {anomalies.map((a, i) => (
             <div
               key={i}
@@ -37,12 +58,14 @@ export default function AnomalyPanel({ anomalies, onRefClick, fullPage }) {
                   </p>
                 </div>
               </div>
+              {a.calc_ref && (
               <button
                 onClick={() => onRefClick(a.calc_ref)}
                 className="text-xs text-slate-500 hover:text-slate-300 underline mt-2"
               >
-                Audit ref: {a.calc_ref?.slice(0, 16)}
+                Audit ref: {a.calc_ref.slice(0, 16)}
               </button>
+              )}
             </div>
           ))}
         </div>

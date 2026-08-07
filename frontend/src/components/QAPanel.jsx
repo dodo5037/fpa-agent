@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { cancelActiveRequest } from '../api'
 
 export default function QAPanel({ onAsk, onRefClick }) {
   const [question, setQuestion] = useState('')
@@ -16,10 +17,15 @@ export default function QAPanel({ onAsk, onRefClick }) {
       const res = await onAsk(question)
       setResult(res)
     } catch (err) {
+      if (err.name === 'AbortError') return
       setError(err.message)
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleCancel = () => {
+    cancelActiveRequest()
   }
 
   return (
@@ -37,10 +43,19 @@ export default function QAPanel({ onAsk, onRefClick }) {
           <button
             type="submit"
             disabled={loading}
-            className="bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-600 text-white px-6 py-3 rounded-lg font-medium transition-colors"
+            className={loading ? 'btn-progress px-6 py-3 rounded-lg font-medium' : 'bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-3 rounded-lg font-medium transition-colors'}
           >
             {loading ? 'Asking...' : 'Ask'}
           </button>
+          {loading && (
+            <button
+              type="button"
+              onClick={handleCancel}
+              className="bg-rose-600/20 hover:bg-rose-600/40 text-rose-400 border border-rose-500/30 px-4 py-3 rounded-lg text-sm font-medium transition-colors"
+            >
+              Cancel
+            </button>
+          )}
         </form>
         {error && (
           <div className="mt-3 text-sm text-rose-400 bg-rose-400/10 rounded p-3">
@@ -51,7 +66,6 @@ export default function QAPanel({ onAsk, onRefClick }) {
 
       {result && (
         <div className="space-y-4">
-          {/* SQL Display */}
           <div className="bg-slate-800 rounded-xl border border-slate-700 p-5">
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-sm font-semibold text-slate-400">Generated SQL</h3>
@@ -67,7 +81,6 @@ export default function QAPanel({ onAsk, onRefClick }) {
             </pre>
           </div>
 
-          {/* Results Table */}
           {result.results && result.results.length > 0 && (
             <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
               <div className="px-5 py-3 border-b border-slate-700">

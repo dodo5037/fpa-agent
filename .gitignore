@@ -16,11 +16,14 @@ venv/
 # DuckDB
 *.duckdb
 *.duckdb.wal
-
-# Data files
-*.parquet
-*.csv
 data/
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+*.coverage.*
+coverage.xml
 
 # Node / Frontend
 node_modules/
@@ -37,12 +40,11 @@ docker/data/
 *.swp
 *.swo
 *~
+.code-workspace
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
+# BUG_REPORT.md (local debug notes)
+BUG_REPORT.md

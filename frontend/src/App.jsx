@@ -1,23 +1,33 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
-  fetchSummary, fetchVariances, fetchAnomalies, fetchAuditLog, fetchAuditEntry,
+  fetchSummary, fetchVariances, fetchAnomalies,
   askQuestion, generateMemo, uploadData,
   fetchSessions, createSession, deleteSession,
-  fetchSettings, updateSettings, clearAuditLog,
+  fetchSettings, updateSettings,
 } from './api'
-import KPICards from './components/KPICards'
+import KPICard from './components/KPICard'
 import VarianceTable from './components/VarianceTable'
 import AnomalyPanel from './components/AnomalyPanel'
 import VarianceChart from './components/VarianceChart'
 import QAPanel from './components/QAPanel'
 import MemoViewer from './components/MemoViewer'
-import AuditTrail from './components/AuditTrail'
 import UploadPanel from './components/UploadPanel'
 import SettingsPanel from './components/SettingsPanel'
 import DataViewer from './components/DataViewer'
+import DivergingBarChart from './components/DivergingBarChart'
+import YTDComboChart from './components/YTDComboChart'
+import VectorDeltaChart from './components/VectorDeltaChart'
+import DashboardGrid from './components/DashboardGrid'
+import TimeSeriesChart from './components/TimeSeriesChart'
+import RegionalChart from './components/RegionalChart'
+import SteppedAreaChart from './components/SteppedAreaChart'
+import AuditTrail from './components/AuditTrail'
+import AIHistory from './components/AIHistory'
 
 const queryClient = new QueryClient()
+
+const HIDDEN_BY_DEFAULT = new Set(['timeseries', 'regional', 'stepped-area'])
 
 export default function App() {
   return (
@@ -39,13 +49,20 @@ function AppContent() {
   const [loading, setLoading] = useState(true)
   const [isRefetching, setIsRefetching] = useState(false)
 
-  const [auditLog, setAuditLog] = useState([])
-  const [selectedRef, setSelectedRef] = useState(null)
-  const [auditDetail, setAuditDetail] = useState(null)
-
   const dataHashRef = useRef(null)
 
-  // ── Core data loader: initial load OR explicit refresh ──
+  const [hiddenWidgets, setHiddenWidgets] = useState(() => new Set(HIDDEN_BY_DEFAULT))
+  const [showAddMenu, setShowAddMenu] = useState(false)
+
+  const handleAddWidget = useCallback((widgetId) => {
+    setHiddenWidgets(prev => {
+      const next = new Set(prev)
+      next.delete(widgetId)
+      return next
+    })
+    setShowAddMenu(false)
+  }, [])
+
   const loadSessionData = useCallback(async (sid, isRefresh = false) => {
     if (!sid) return
     if (isRefresh) {
@@ -64,7 +81,6 @@ function AppContent() {
       setVariances(vars.results || [])
       setAnomalies(anoms.results || [])
     } catch {
-      // KEEP existing data on error — don't wipe to null
       if (!dataLoaded) {
         setSummary(null)
         setVariances([])
@@ -77,7 +93,6 @@ function AppContent() {
     }
   }, [dataLoaded])
 
-  // ── Load sessions list ──
   const refreshSessions = useCallback(async () => {
     try {
       const res = await fetchSessions()
@@ -85,7 +100,6 @@ function AppContent() {
     } catch { return [] }
   }, [])
 
-  // ── On mount: load sessions, pick right session, load data ──
   useEffect(() => {
     let cancelled = false
     const init = async () => {
@@ -101,31 +115,28 @@ function AppContent() {
     }
     init()
     return () => { cancelled = true }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])
 
-  // ── Smart polling via /version endpoint ──
   useEffect(() => {
     if (!sessionId) return
-
     const poll = async () => {
       try {
         const res = await fetch(`/api/sessions/${sessionId}/version`)
-        const { data_hash, row_count } = await res.json()
+        const { data_hash } = await res.json()
         if (data_hash !== dataHashRef.current) {
+          if (dataHashRef.current !== null) {
+            await loadSessionData(sessionId, true)
+          }
           dataHashRef.current = data_hash
-          await loadSessionData(sessionId, true)
         }
-        // Also refresh session list for row counts
         const sess = await refreshSessions()
         setSessions(sess)
       } catch {}
     }
-
     const interval = setInterval(poll, 60000)
     return () => clearInterval(interval)
   }, [sessionId, loadSessionData, refreshSessions])
 
-  // ── Switch session ──
   const switchSession = useCallback((sid) => {
     if (sid === sessionId) return
     setSessionId(sid)
@@ -133,23 +144,18 @@ function AppContent() {
     loadSessionData(sid, false)
   }, [sessionId, loadSessionData])
 
-  // ── After upload ──
   const handleUploadComplete = useCallback(async () => {
     dataHashRef.current = null
     const sess = await refreshSessions()
     setSessions(sess)
-    await loadSessionData(sessionId, false)
+    await loadSessionData(sessionId, true)
     setActiveTab('dashboard')
   }, [sessionId, loadSessionData, refreshSessions])
 
-  const handleRefClick = async (ref) => {
-    setSelectedRef(ref)
-    const entry = await fetchAuditEntry(ref)
-    setAuditDetail(entry)
-    setActiveTab('audit')
-    const log = await fetchAuditLog()
-    setAuditLog(log.entries || [])
-  }
+  const handleRecalculate = useCallback(async () => {
+    dataHashRef.current = null
+    await loadSessionData(sessionId, true)
+  }, [sessionId, loadSessionData])
 
   const handleNewSession = async () => {
     const name = prompt('Session name:')
@@ -170,7 +176,6 @@ function AppContent() {
     }
   }
 
-  // ── Fetch wrapper for the version poll ──
   async function fetch(url) {
     const API = import.meta.env.VITE_API_URL || ''
     const r = await window.fetch(`${API}${url}`)
@@ -180,14 +185,28 @@ function AppContent() {
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: '⊞' },
     { id: 'data', label: 'Data', icon: '📋' },
-    { id: 'variance', label: 'Variance Table', icon: '▤' },
     { id: 'anomalies', label: 'Anomalies', icon: '⚠' },
     { id: 'qa', label: 'Ask AI', icon: '◈' },
-    { id: 'memo', label: 'Memo', icon: '✎' },
-    { id: 'upload', label: 'Upload Data', icon: '↑' },
     { id: 'audit', label: 'Audit Trail', icon: '🔍' },
     { id: 'settings', label: 'Settings', icon: '⚙' },
   ]
+
+  const widgets = [
+    { id: 'kpi-revenue',    label: 'Revenue KPI',      render: () => (<KPICard label="Total Revenue (Actual)" value={summary?.total_revenue_actual} budget={summary?.total_revenue_budget} type="revenue" />) },
+    { id: 'kpi-expense',    label: 'Expense KPI',      render: () => (<KPICard label="Total Expenses (Actual)" value={summary?.total_expense_actual} budget={summary?.total_expense_budget} type="expense" />) },
+    { id: 'kpi-net',        label: 'Net Variance KPI', render: () => (<KPICard label="Net Variance" value={summary?.net_variance} type="net" />) },
+    { id: 'variance-chart', label: 'Variance Chart',   render: () => (<VarianceChart variances={variances} />) },
+    { id: 'anomalies',      label: 'Anomalies Panel',  render: () => (<AnomalyPanel anomalies={anomalies.slice(0, 10)} />) },
+    { id: 'diverging',      label: 'Diverging Chart',  render: () => (<DivergingBarChart variances={variances} />) },
+    { id: 'ytd-combo',      label: 'YTD Combo Chart',  render: () => (<YTDComboChart sessionId={sessionId} />) },
+    { id: 'vector-delta',   label: 'Vector Delta',     render: () => (<VectorDeltaChart sessionId={sessionId} />) },
+    { id: 'timeseries',     label: 'Time-Series',      render: () => (<TimeSeriesChart sessionId={sessionId} />) },
+    { id: 'regional',       label: 'Regional Budget',  render: () => (<RegionalChart sessionId={sessionId} />) },
+    { id: 'stepped-area',   label: 'Stepped Variance', render: () => (<SteppedAreaChart variances={variances} />) },
+  ]
+
+  const visibleWidgets = widgets.filter(w => !hiddenWidgets.has(w.id))
+  const hiddenAvailable = widgets.filter(w => hiddenWidgets.has(w.id))
 
   if (!sessionId || (!dataLoaded && loading)) {
     return (
@@ -205,7 +224,7 @@ function AppContent() {
       <aside className="w-64 bg-slate-800/50 border-r border-slate-700 flex flex-col h-screen sticky top-0">
         <div className="px-5 py-5 border-b border-slate-700">
           <h1 className="text-lg font-semibold tracking-tight">FP&A Agent</h1>
-          <p className="text-xs text-slate-500 mt-0.5">Dashboard v2.1</p>
+          <p className="text-xs text-slate-500 mt-0.5">Dashboard v2.3</p>
         </div>
         <div className="px-3 py-3 border-b border-slate-700">
           <div className="flex items-center justify-between mb-2 px-2">
@@ -248,44 +267,80 @@ function AppContent() {
       <main className="flex-1 overflow-y-auto">
         <header className="border-b border-slate-700 bg-slate-800/30 px-6 py-3 flex items-center justify-between">
           <h2 className="text-sm text-slate-400">{navItems.find(n => n.id === activeTab)?.label || 'Dashboard'}</h2>
-          {isRefetching && (
-            <span className="text-xs text-slate-500 flex items-center gap-2">
-              <span className="inline-block w-3 h-3 border border-slate-600 border-t-emerald-400 rounded-full animate-spin"></span>
-              Syncing...
-            </span>
-          )}
+          <div className="flex items-center gap-3">
+            {activeTab === 'dashboard' && (
+              <>
+                <button onClick={handleRecalculate}
+                  className="text-xs px-3 py-1.5 rounded-lg bg-slate-700/50 hover:bg-slate-700 text-slate-400 hover:text-emerald-400 border border-slate-600 hover:border-emerald-500/50 transition-all duration-200">
+                  ↻ Recalculate
+                </button>
+                <div className="relative">
+                  <button
+                    onClick={() => setShowAddMenu(!showAddMenu)}
+                    disabled={hiddenAvailable.length === 0}
+                    className="text-xs px-3 py-1.5 rounded-lg bg-slate-700/50 hover:bg-slate-700 text-slate-400 hover:text-slate-200 border border-slate-600 transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed">
+                    + Add Widget
+                  </button>
+                  {showAddMenu && hiddenAvailable.length > 0 && (
+                    <div className="absolute right-0 top-full mt-1 w-44 bg-slate-700 border border-slate-600 rounded-lg shadow-xl py-1 z-50">
+                      {hiddenAvailable.map(w => (
+                        <button key={w.id} onClick={() => handleAddWidget(w.id)}
+                          className="w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-slate-600 hover:text-white transition-colors">
+                          {w.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+            {isRefetching && (
+              <span className="text-xs text-slate-500 flex items-center gap-2">
+                <span className="inline-block w-3 h-3 border border-slate-600 border-t-emerald-400 rounded-full animate-spin"></span>
+                Syncing...
+              </span>
+            )}
+          </div>
         </header>
 
         <div key={`${activeTab}-${sessionId}`} className="p-6 reveal-animation">
           {activeTab === 'dashboard' && (
             variances.length > 0 ? (
-              <div className="space-y-6">
-                <KPICards summary={summary} onRefClick={handleRefClick} />
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                  <div className="lg:col-span-2">
-                    <VarianceChart variances={variances} onRefClick={handleRefClick} />
+              <DashboardGrid sessionId={sessionId}>
+                {visibleWidgets.map(w => (
+                  <div key={w.id}>
+                    {w.render()}
                   </div>
-                  <AnomalyPanel anomalies={anomalies.slice(0, 10)} onRefClick={handleRefClick} />
-                </div>
-              </div>
+                ))}
+              </DashboardGrid>
             ) : (
-              <DashboardEmptyState onGoToUpload={() => setActiveTab('upload')} />
+              <DashboardEmptyState onGoToUpload={() => setActiveTab('data')} />
             )
           )}
 
-          {activeTab === 'data' && <DataViewer sessionId={sessionId} />}
-          {activeTab === 'variance' && <VarianceTable variances={variances} onRefClick={handleRefClick} />}
-          {activeTab === 'anomalies' && <AnomalyPanel anomalies={anomalies} onRefClick={handleRefClick} fullPage />}
-          {activeTab === 'qa' && <QAPanel onAsk={(q) => askQuestion(q, sessionId)} onRefClick={handleRefClick} />}
-          {activeTab === 'memo' && <MemoViewer onGenerate={() => generateMemo(sessionId)} />}
-          {activeTab === 'upload' && <UploadPanel onUpload={(file) => uploadData(file, sessionId)} onUploaded={handleUploadComplete} />}
-          {activeTab === 'audit' && (
-            <AuditTrail log={auditLog}
-              onRefresh={async () => { const log = await fetchAuditLog(); setAuditLog(log.entries || []) }}
-              selectedRef={selectedRef} auditDetail={auditDetail} onRefClick={handleRefClick} />)}
+          {activeTab === 'data' && (
+            <div className="space-y-6">
+              <UploadPanel onUpload={(file) => uploadData(file, sessionId)} onUploaded={handleUploadComplete} />
+              <DataViewer sessionId={sessionId} />
+              <VarianceTable variances={variances} />
+            </div>
+          )}
+
+          {activeTab === 'anomalies' && <AnomalyPanel anomalies={anomalies} fullPage />}
+
+          {activeTab === 'qa' && (
+            <div className="space-y-6">
+              <QAPanel onAsk={(q) => askQuestion(q, sessionId)} />
+              <MemoViewer onGenerate={() => generateMemo(sessionId)} />
+              <AIHistory sessionId={sessionId} />
+            </div>
+          )}
+
+          {activeTab === 'audit' && <AuditTrail sessionId={sessionId} />}
+
           {activeTab === 'settings' && (
             <SettingsPanel onSettingsChanged={() => {}} fetchSettings={fetchSettings}
-              updateSettings={updateSettings} clearAuditLog={clearAuditLog} />)}
+              updateSettings={updateSettings} />)}
         </div>
       </main>
     </div>
@@ -299,7 +354,7 @@ function DashboardEmptyState({ onGoToUpload }) {
       <p className="text-slate-500 text-sm mb-6">Upload your budget-vs-actuals CSV to populate the dashboard.</p>
       <button onClick={onGoToUpload}
         className="bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-3 rounded-lg font-medium transition-colors">
-        Go to Upload Data
+        Go to Data
       </button>
     </div>
   )

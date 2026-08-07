@@ -100,16 +100,16 @@ def _log_query(
     result_rows: list[dict],
 ) -> str:
     """
-    Log a query to calculation_log ONLY if audit is enabled.
-    Returns result_ref hash regardless (for UI linking).
+    A1: Audit is mandatory. Always log to calculation_log with dedup.
+    Returns result_ref hash.
     """
-    from backend.settings import is_audit_enabled
+    from backend.audit import _is_duplicate
 
     params_json = json.dumps(params, default=str) if params else json.dumps({})
     hash_input = f"{sql}|{params_json}"
     result_ref = hashlib.sha256(hash_input.encode()).hexdigest()[:16]
 
-    if is_audit_enabled(conn):
+    if not _is_duplicate(sql, params_json):
         existing = conn.execute(
             "SELECT result_ref FROM calculation_log WHERE result_ref = ? LIMIT 1",
             [result_ref]
@@ -130,8 +130,9 @@ def calculate_variances(conn: duckdb.DuckDBPyConnection, session_id: str = "defa
     """
     Calculate budget-vs-actuals variances for a specific session.
     """
-    rows = conn.execute(VARIANCE_SQL, [session_id]).fetchall()
-    columns = [d[0] for d in conn.description]
+    result = conn.execute(VARIANCE_SQL, [session_id])
+    rows = result.fetchall()
+    columns = [d[0] for d in result.description]
 
     results = []
     for row in rows:
@@ -154,8 +155,9 @@ def detect_anomalies(
     Detect variances exceeding the given threshold for a specific session.
     """
     sql = ANOMALY_SQL.format(threshold=threshold_pct)
-    rows = conn.execute(sql, [session_id]).fetchall()
-    columns = [d[0] for d in conn.description]
+    result = conn.execute(sql, [session_id])
+    rows = result.fetchall()
+    columns = [d[0] for d in result.description]
 
     results = []
     for row in rows:
@@ -164,6 +166,118 @@ def detect_anomalies(
 
     params = {"threshold_pct": threshold_pct, "session_id": session_id}
     calc_ref = _log_query(conn, sql, params, results)
+    for r in results:
+        r["calc_ref"] = calc_ref
+
+    # A2.3: Anomaly audit is mutation-driven. Logging happens in the
+    # upload handler (main.py) after CSV ingestion — NOT here on every
+    # read/fetch call. This prevents audit spam from polling/page loads.
+
+    return results
+
+
+# ── T1: Mathematical Engine — Timeseries & Regional ──────────────────
+
+TIMESERIES_SQL = """
+SELECT
+    ba_budget.period_id,
+    SUM(ba_budget.amount) AS total_budget,
+    SUM(ba_actual.amount) AS total_actual,
+    SUM(ba_actual.amount) - SUM(ba_budget.amount) AS variance_amount,
+    CASE
+        WHEN SUM(ba_budget.amount) = 0 THEN NULL
+        ELSE ROUND(
+            ((SUM(ba_actual.amount) - SUM(ba_budget.amount)) / SUM(ba_budget.amount)) * 100, 2
+        )
+    END AS variance_pct
+FROM budget_actuals ba_budget
+JOIN budget_actuals ba_actual
+    ON ba_budget.entity_id  = ba_actual.entity_id
+    AND ba_budget.account_id = ba_actual.account_id
+    AND ba_budget.period_id  = ba_actual.period_id
+    AND ba_budget.session_id = ba_actual.session_id
+WHERE ba_budget.scenario = 'budget'
+  AND ba_actual.scenario = 'actual'
+  AND ba_budget.session_id = ?
+GROUP BY ba_budget.period_id
+ORDER BY ba_budget.period_id
+"""
+
+REGIONAL_SQL = """
+SELECT
+    ba_budget.entity_id,
+    SUM(ba_budget.amount) AS total_budget,
+    SUM(ba_actual.amount) AS total_actual,
+    SUM(ba_actual.amount) - SUM(ba_budget.amount) AS variance_amount,
+    CASE
+        WHEN SUM(ba_budget.amount) = 0 THEN NULL
+        ELSE ROUND(
+            ((SUM(ba_actual.amount) - SUM(ba_budget.amount)) / SUM(ba_budget.amount)) * 100, 2
+        )
+    END AS variance_pct
+FROM budget_actuals ba_budget
+JOIN budget_actuals ba_actual
+    ON ba_budget.entity_id  = ba_actual.entity_id
+    AND ba_budget.account_id = ba_actual.account_id
+    AND ba_budget.period_id  = ba_actual.period_id
+    AND ba_budget.session_id = ba_actual.session_id
+WHERE ba_budget.scenario = 'budget'
+  AND ba_actual.scenario = 'actual'
+  AND ba_budget.session_id = ?
+GROUP BY ba_budget.entity_id
+ORDER BY ba_budget.entity_id
+"""
+
+
+def calculate_timeseries(
+    conn: duckdb.DuckDBPyConnection,
+    session_id: str = "default",
+    moving_avg_window: int = 3,
+) -> list[dict]:
+    """
+    Return period-level aggregated variance with cumulative YTD and
+    moving average. Window size controls the trailing-average period count.
+    """
+    result = conn.execute(TIMESERIES_SQL, [session_id])
+    rows = result.fetchall()
+    columns = [d[0] for d in result.description]
+    periods = [dict(zip(columns, row)) for row in rows]
+
+    cumulative = 0.0
+    for i, p in enumerate(periods):
+        cumulative += float(p.get("variance_amount", 0) or 0)
+        p["cumulative_ytd"] = round(cumulative, 2)
+
+        # Strict historical moving average — only uses past data (no future)
+        window_start = max(0, i - moving_avg_window + 1)
+        window_actuals = [
+            float(periods[j].get("total_actual", 0) or 0)
+            for j in range(window_start, i + 1)
+        ]
+        p["moving_avg_actual"] = round(
+            sum(window_actuals) / len(window_actuals), 2
+        ) if window_actuals else 0.0
+
+    calc_ref = _log_query(conn, TIMESERIES_SQL, {"session_id": session_id}, periods)
+    for p in periods:
+        p["calc_ref"] = calc_ref
+
+    return periods
+
+
+def calculate_regional(
+    conn: duckdb.DuckDBPyConnection,
+    session_id: str = "default",
+) -> list[dict]:
+    """
+    Return entity-level (regional) aggregated budget vs actual.
+    """
+    result = conn.execute(REGIONAL_SQL, [session_id])
+    rows = result.fetchall()
+    columns = [d[0] for d in result.description]
+    results = [dict(zip(columns, row)) for row in rows]
+
+    calc_ref = _log_query(conn, REGIONAL_SQL, {"session_id": session_id}, results)
     for r in results:
         r["calc_ref"] = calc_ref
 
