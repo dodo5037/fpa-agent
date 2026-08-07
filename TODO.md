@@ -31,6 +31,18 @@ All features built, tested, deployed. **118 backend tests pass.** Zero JS errors
 | Regional/entity-level aggregation | ✓ |
 | Dark mode + monospace numbers | ✓ |
 | Widget menu (···) on each panel | ✓ |
+| Drag-and-drop grid layout (react-grid-layout) | ✓ |
+| Session-based layout persistence (localStorage) | ✓ |
+| Resize handles (8-edge, neon teal on hover) | ✓ |
+| Auto-Layout button (compact vertical packing) | ✓ |
+| Wobble mount animation on widget drop | ✓ |
+| +Add Widget menu (hidden-by-default advanced charts) | ✓ |
+| Multi-instance widget spawning | ✓ |
+| Smart chart label truncation (SVG formatter) | ✓ |
+| Animated gradient progress button (Ask / Generate Memo) | ✓ |
+| Cancel button for active LLM generation | ✓ |
+| Pie/Donut slices showing real percentages | ✓ |
+| Anomalies panel overflow-y-auto scroll | ✓ |
 | Docker Compose deployment | ✓ |
 
 ### Backend endpoints
@@ -70,24 +82,3 @@ All features built, tested, deployed. **118 backend tests pass.** Zero JS errors
 - Scenario modeling (what-if analysis)
 - Email alert on anomaly detection
 - Multi-user role-based access control
-
----
-
-## NEEDS MANUAL VERIFICATION — do NOT add to feature list until confirmed
-
-The following features were implemented but have not been independently verified
-via a full fresh-clone browser test. Manually test each one, then move verified
-items into the feature list above.
-
-- Drag-and-drop grid layout (react-grid-layout)
-- Session-based layout persistence (localStorage)
-- Resize handles (8-edge, neon teal on hover)
-- Auto-Layout button (compact vertical packing)
-- Wobble mount animation on widget drop
-- +Add Widget menu with hidden-by-default advanced charts
-- Multi-instance widget spawning
-- Smart chart label truncation (SVG formatter, not CSS)
-- Animated gradient progress button (Ask / Generate Memo)
-- Cancel button for active LLM generation
-- Pie/Donut slices showing real percentages
-- Anomalies panel overflow-y-auto scroll
