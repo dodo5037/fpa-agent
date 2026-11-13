@@ -24,6 +24,8 @@
   <br><sub><a href="docs/promo_30s.mp4">Watch the 30-second promo (MP4)</a></sub>
 </p>
 
+**In plain terms:** a finance team can trust the memo, because every number in it links to the SQL calculation that produced it and the AI never does the maths.
+
 ---
 
 ## The problem
